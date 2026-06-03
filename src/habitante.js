@@ -57,6 +57,7 @@ export class Habitante {
     this.chegadaPendente = false;
     this.caminho = [];
     this.acaoPendente = null;
+    this.limparMarcadorDestino();
 
     this.velocidade = aleatorio(92, 132);
     this.tempoOcioso = 0;
@@ -67,6 +68,8 @@ export class Habitante {
     this.beberCd = 0;
     this.comerCd = 0;
     this.bolha = null;
+    this.marcadorDestino = null;
+    this._statusIconAtual = "";
 
     this.textura = escolher(HABITANTE_TEXTURES);
     this.sprite = this.criarSprite(x, y);
@@ -99,6 +102,14 @@ export class Habitante {
     this.visual.setOrigin(0.5, 1);
     this.visual.setScale(this.visualBaseScale);
 
+    this.statusIcon = this.scene.add.text(0, -94, "👁️", {
+      fontFamily: "Arial", fontSize: "17px", fontStyle: "700",
+      color: "#fff8df", align: "center",
+      backgroundColor: "rgba(16, 24, 32, 0.72)",
+      padding: { x: 5, y: 2 }
+    });
+    this.statusIcon.setOrigin(0.5);
+
     this.nomeLabel = this.scene.add.text(0, -74, this.nome, {
       fontFamily: "Arial", fontSize: "12px", fontStyle: "700",
       color: "#fff8df", align: "center"
@@ -106,7 +117,7 @@ export class Habitante {
     this.nomeLabel.setOrigin(0.5);
     this.nomeLabel.setShadow(0, 2, "#000000", 3, true, true);
 
-    container.add([this.anelTribo, this.selecao, this.visual, this.nomeLabel]);
+    container.add([this.anelTribo, this.selecao, this.visual, this.statusIcon, this.nomeLabel]);
     container.setSize(58, 92);
     container.setInteractive(
       new Phaser.Geom.Rectangle(-29, -92, 58, 98),
@@ -133,6 +144,7 @@ export class Habitante {
   mover(mundo, aoChegar, delta, permitirExploracaoLivre = true) {
     if (!this.vivo) return;
     this.atualizarRelogios(delta);
+    this.atualizarIndicadores();
 
     if (this.chegadaPendente) {
       this.chegadaPendente = false;
@@ -145,7 +157,7 @@ export class Habitante {
 
     if (!this.caminho.length) {
       this.tempoOcioso += delta;
-      if (permitirExploracaoLivre && this.tempoOcioso > this.proximoPasseioEm) {
+      if (permitirExploracaoLivre && !this.acaoPendente && this.tempoConversa <= 0 && this.tempoOcioso > this.proximoPasseioEm * 2.2) {
         this.iniciarExploracaoLivre(mundo);
       }
       return;
@@ -175,6 +187,7 @@ export class Habitante {
       this.visual.setScale(dx < 0 ? -this.visualBaseScale : this.visualBaseScale, this.visualBaseScale);
     }
     this.sprite.setDepth(this.sprite.y + 10000);
+    this.atualizarIndicadores();
   }
 
   atualizarRelogios(delta) {
@@ -186,6 +199,7 @@ export class Habitante {
   }
 
   finalizarMovimento(aoChegar) {
+    this.limparMarcadorDestino();
     this.destinoTile = null;
     this.proximoPasseioEm = aleatorio(1200, 3600);
     if (this.deveObservarDestino || this.acaoPendente) {
@@ -204,6 +218,7 @@ export class Habitante {
     const tipo = mundo.descreverTile(alvo.x, alvo.y);
     this.definirDestinoTile(alvo, mundo, `explorar ${tipo}`, null, false);
     this.pensamento = `Quero circular e entender melhor o terreno de ${tipo}.`;
+    if (Math.random() < 0.18) this.falar("Vou explorar.", 1500);
   }
 
   definirDestino(local, mundo) {
@@ -225,6 +240,8 @@ export class Habitante {
     this.objetivoAtual = objetivo;
     this.tempoOcioso = 0;
     this.proximoPasseioEm = aleatorio(1600, 4000);
+    this.mostrarMarcadorDestino(tile, mundo);
+    this.atualizarIndicadores();
     if (!this.caminho.length) this.chegadaPendente = true;
     return true;
   }
@@ -537,6 +554,67 @@ export class Habitante {
     });
   }
 
+
+  emojiEstado() {
+    if (!this.vivo) return "💀";
+    if (this.acaoPendente?.tarefa) {
+      const mapa = {
+        beber: "💧", comer: "🍖", coletar: "🪵", construir: "🏠", craftar: "🛠️",
+        cacar: "🏹", atacar: "⚔️", descansar: "😴", socializar: "💬", explorar: "🧭", observar: "👁️"
+      };
+      return mapa[this.acaoPendente.tarefa] || "✨";
+    }
+    if (this.tempoConversa > 0) return "💬";
+    if (this.sede > 76) return "💧";
+    if (this.fome > 76) return "🍖";
+    if (this.energia < 30) return "😴";
+    if (this.caminho.length) return "🚶";
+    return "👁️";
+  }
+
+  atualizarIndicadores() {
+    if (!this.statusIcon) return;
+    const emoji = this.emojiEstado();
+    if (emoji === this._statusIconAtual) return;
+    this._statusIconAtual = emoji;
+    this.statusIcon.setText(emoji);
+  }
+
+  mostrarPulso(emoji = "✨") {
+    if (!this.vivo) return;
+    const pulso = this.scene.add.text(0, -118, emoji, {
+      fontFamily: "Arial", fontSize: "24px", color: "#fff8df"
+    });
+    pulso.setOrigin(0.5);
+    this.sprite.add(pulso);
+    this.scene.tweens.add({
+      targets: pulso, y: -142, alpha: 0, scale: 1.35,
+      duration: 850, ease: "Sine.out",
+      onComplete: () => pulso.destroy()
+    });
+  }
+
+  mostrarMarcadorDestino(tile, mundo) {
+    this.limparMarcadorDestino();
+    if (!tile || !mundo) return;
+    const pos = mundo.posicaoHabitante(tile.x, tile.y);
+    const g = this.scene.add.graphics();
+    g.lineStyle(3, this.corTribo(), 0.68);
+    g.strokeEllipse(pos.x, pos.y - 4, 54, 22);
+    g.setDepth(pos.y + 9990);
+    this.marcadorDestino = g;
+    this.scene.tweens.add({
+      targets: g, alpha: { from: 0.25, to: 0.95 },
+      duration: 520, yoyo: true, repeat: -1, ease: "Sine.inOut"
+    });
+  }
+
+  limparMarcadorDestino() {
+    if (!this.marcadorDestino) return;
+    this.marcadorDestino.destroy();
+    this.marcadorDestino = null;
+  }
+
   podeConversarCom(outro) {
     return this.vivo && outro.vivo
       && this.cooldownConversa <= 0 && outro.cooldownConversa <= 0
@@ -577,6 +655,7 @@ export class Habitante {
     this.sprite.setAlpha(0.28);
     this.caminho = [];
     this.acaoPendente = null;
+    this.limparMarcadorDestino();
     this.pensamento = "Morreu.";
     this.objetivoAtual = "sem atividade";
   }

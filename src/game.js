@@ -28,6 +28,7 @@ let pausado = false;
 let concorrencia = 5;
 let ultimoCliqueHabitante = 0;
 let controlesCamera;
+let seguindoSelecionado = false;
 
 const config = {
   type: Phaser.AUTO,
@@ -94,14 +95,15 @@ function update(time, delta) {
 
   const ctx = contextoIa();
   for (const h of habitantes) {
-    h.mover(mundo, habitanteChegouNoDestino, delta, false);
+    const podeExplorarLivre = !decisaoProcessando && !h.acaoPendente && h.tempoConversa <= 0;
+    h.mover(mundo, habitanteChegouNoDestino, delta, podeExplorarLivre);
     const ev = h.tickVida(d, ctx);
-    if (ev) adicionarEvento(mundo, ev);
+    if (ev) eventoHabitante(h, ev);
   }
 
   fauna.update(d, habitantes, (animal, presa) => {
     presa.receberDano(animal.def.ataque || 6, `ataque de ${animal.def.nome}`);
-    if (Math.random() < 0.25) adicionarEvento(mundo, `${animal.def.nome} atacou ${presa.nome}!`);
+    if (Math.random() < 0.25) eventoHabitante(presa, `${animal.def.nome} atacou ${presa.nome}!`);
   });
 
   processarInteracoes(delta);
@@ -178,7 +180,11 @@ function configurarInterface() {
     aoMudarVelocidade: v => { cena.simVelocidade = v; },
     aoMudarConcorrencia: v => { concorrencia = v; },
     aoSalvar: () => { salvarMundo(true); adicionarEvento(mundo, "Mundo salvo."); },
-    aoNovoMundo: novoMundo
+    aoNovoMundo: novoMundo,
+    aoSeguirSelecionado: () => alternarSeguirSelecionado(),
+    aoIrAldeia: () => focarAldeia(),
+    aoClicarEvento: data => focarEvento(data),
+    aoPainelMudou: () => setTimeout(() => cena.scale.resize(window.innerWidth - document.getElementById("painel").offsetWidth, window.innerHeight), 50)
   });
 
   document.getElementById("btn-dia")?.addEventListener("click", () => passarDia());
@@ -255,18 +261,63 @@ function selecionarHabitante(h, voar = true) {
     cam.stopFollow();
     cam.centerOn(h.sprite.x, h.sprite.y);
     cam.startFollow(h.sprite, true, 0.12, 0.12);
+    seguindoSelecionado = true;
     cam.flash(180, 246, 220, 140, true);
   }
   atualizarPainel(contextoPainel());
 }
 
 function pararSeguir() {
+  seguindoSelecionado = false;
   cena?.cameras?.main?.stopFollow();
+}
+
+function alternarSeguirSelecionado() {
+  if (!habitanteSelecionado || !habitanteSelecionado.vivo || !cena) return;
+  if (seguindoSelecionado) {
+    pararSeguir();
+    return;
+  }
+  selecionarHabitante(habitanteSelecionado, true);
+}
+
+function focarAldeia() {
+  if (!cena) return;
+  pararSeguir();
+  const pos = iso(ALDEIA_X, ALDEIA_Y);
+  cena.cameras.main.pan(pos.x, pos.y, 420, "Sine.easeInOut");
+  cena.cameras.main.flash(120, 143, 209, 106, true);
+}
+
+function focarEvento(data = {}) {
+  if (data.habitante) {
+    const h = habitantes.find(x => x.nome === data.habitante);
+    if (h) { selecionarHabitante(h, true); return; }
+  }
+  if (Number.isInteger(data.x) && Number.isInteger(data.y)) {
+    pararSeguir();
+    const pos = mundo.posicaoHabitante(data.x, data.y);
+    cena.cameras.main.pan(pos.x, pos.y, 420, "Sine.easeInOut");
+    cena.cameras.main.flash(120, 114, 209, 214, true);
+  }
 }
 
 // ===================== CONTEXTO ========================================
 function contextoIa() {
   return { mundo, estruturas, fauna, era: estado.era, guerra: estado.guerra };
+}
+
+function eventoHabitante(h, texto) {
+  adicionarEvento(mundo, texto, { habitante: h.nome, x: h.xTile, y: h.yTile });
+}
+
+const EMOJI_TAREFA = {
+  beber: "💧", comer: "🍖", coletar: "🪵", construir: "🏠", craftar: "🛠️",
+  cacar: "🏹", atacar: "⚔️", descansar: "😴", socializar: "💬", explorar: "🧭", observar: "👁️"
+};
+
+function emojiDaTarefa(tarefa) {
+  return EMOJI_TAREFA[tarefa] || "✨";
 }
 
 function contextoPainel() {
@@ -313,6 +364,9 @@ function executarAcaoAutonoma(h, acao) {
   h.pensamento = acao.motivo;
   h.registrarAcao({ ...acao, dia: mundo.dia });
   if (acao.fala) h.falar(acao.fala);
+  else if ((acao.intensidade || 0) >= 55 || Math.random() < 0.08) {
+    h.falar(acao.motivo || acao.acao, 2200);
+  }
 
   const alvo = acao.alvoHabitante ? habitantes.find(x => x.nome === acao.alvoHabitante && x.vivo) : null;
 
@@ -326,7 +380,7 @@ function executarAcaoAutonoma(h, acao) {
   if (!alvo && !acao.destinoTile && !acao.destinoLocalId) {
     const r = resolverTarefa(h, null, acao);
     h.acaoPendente = null;
-    if (r) adicionarEvento(mundo, `${h.nome}: ${r}.`);
+    if (r) eventoHabitante(h, `${h.nome}: ${r}.`);
     return;
   }
 
@@ -344,7 +398,7 @@ function executarAcaoAutonoma(h, acao) {
   if (!ok) {
     const r = resolverTarefa(h, null, acao);
     h.acaoPendente = null;
-    if (r) adicionarEvento(mundo, `${h.nome}: ${r}.`);
+    if (r) eventoHabitante(h, `${h.nome}: ${r}.`);
   }
 }
 
@@ -352,7 +406,10 @@ function habitanteChegouNoDestino(h) {
   const acao = h.acaoPendente;
   if (!acao) {
     const local = mundo.buscarLocalPorId(h.destinoLocalId);
-    if (local) { const r = h.observarLocal(local); if (r) h.falar(r); }
+    if (local) {
+      const r = h.observarLocal(local);
+      if (r) { h.falar(r); eventoHabitante(h, `${h.nome}: ${r}.`); }
+    }
     return;
   }
 
@@ -366,7 +423,11 @@ function habitanteChegouNoDestino(h) {
   }
 
   h.acaoPendente = null;
-  if (resultado) adicionarEvento(mundo, `${h.nome}: ${resultado}.`);
+  if (resultado) {
+    h.falar(resultado, 2300);
+    h.mostrarPulso?.(emojiDaTarefa(acao.tarefa));
+    eventoHabitante(h, `${h.nome}: ${resultado}.`);
+  }
   atualizarPainel(contextoPainel());
 }
 

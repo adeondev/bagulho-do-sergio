@@ -14,6 +14,17 @@ export function configurarPainel(h) {
     handlers.aoSelecionarHabitante(botao.dataset.habitante);
   });
 
+  const eventos = document.getElementById("eventos");
+  eventos?.addEventListener("click", evento => {
+    const item = evento.target.closest("[data-evento]");
+    if (!item || !handlers.aoClicarEvento) return;
+    handlers.aoClicarEvento({
+      habitante: item.dataset.habitante || "",
+      x: item.dataset.x ? Number(item.dataset.x) : null,
+      y: item.dataset.y ? Number(item.dataset.y) : null
+    });
+  });
+
   configurarIaForm();
   configurarControles();
 }
@@ -38,6 +49,13 @@ function configurarControles() {
   document.getElementById("btn-salvar")?.addEventListener("click", () => handlers.aoSalvar?.());
   document.getElementById("btn-novo")?.addEventListener("click", () => {
     if (confirm("Apagar o mundo atual e comecar um novo?")) handlers.aoNovoMundo?.();
+  });
+
+  document.getElementById("btn-seguir")?.addEventListener("click", () => handlers.aoSeguirSelecionado?.());
+  document.getElementById("btn-aldeia")?.addEventListener("click", () => handlers.aoIrAldeia?.());
+  document.getElementById("btn-reduzir-painel")?.addEventListener("click", () => {
+    document.body.classList.toggle("painel-compacto");
+    handlers.aoPainelMudou?.();
   });
 }
 
@@ -280,11 +298,18 @@ export function setEstadoPausa(pausado) {
   document.body.classList.toggle("is-paused", pausado);
 }
 
-export function adicionarEvento(mundo, texto) {
+export function adicionarEvento(mundo, texto, meta = {}) {
   const div = document.getElementById("eventos");
   const evento = document.createElement("div");
-  evento.className = "evento";
-  evento.innerHTML = `<span>Dia ${mundo.dia}</span>${escaparHtml(texto)}`;
+  const clicavel = meta.habitante || (Number.isInteger(meta.x) && Number.isInteger(meta.y));
+
+  evento.className = `evento ${clicavel ? "is-clickable" : ""}`;
+  evento.dataset.evento = clicavel ? "1" : "";
+  if (meta.habitante) evento.dataset.habitante = meta.habitante;
+  if (Number.isInteger(meta.x)) evento.dataset.x = String(meta.x);
+  if (Number.isInteger(meta.y)) evento.dataset.y = String(meta.y);
+
+  evento.innerHTML = `<span>Dia ${mundo.dia}${clicavel ? " · clique para ver" : ""}</span>${escaparHtml(texto)}`;
   div.prepend(evento);
   while (div.children.length > 46) div.lastElementChild.remove();
 }

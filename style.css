@@ -688,3 +688,54 @@ input[type="range"] {
 }
 
 .acoes-lista small { color: var(--muted); }
+
+
+/* ---- Melhorias v0.2: camera, eventos clicaveis e painel observador ---- */
+.camera-linha {
+  grid-template-columns: repeat(3, 1fr);
+  margin-top: 8px;
+}
+
+.evento {
+  cursor: default;
+  transition: transform .12s ease, border-color .12s ease, background .12s ease;
+}
+
+.evento.is-clickable {
+  cursor: pointer;
+  border-color: rgba(114, 209, 214, 0.28);
+}
+
+.evento.is-clickable:hover {
+  transform: translateX(-2px);
+  border-color: rgba(114, 209, 214, 0.62);
+  background: rgba(114, 209, 214, 0.10);
+}
+
+body.painel-compacto {
+  --panel-w: 54px;
+}
+
+body.painel-compacto #painel {
+  padding: 10px 7px;
+  overflow: hidden;
+}
+
+body.painel-compacto #painel > *:not(.painel-topo) {
+  display: none;
+}
+
+body.painel-compacto .painel-topo {
+  display: grid;
+  gap: 8px;
+}
+
+body.painel-compacto .painel-topo div {
+  display: none;
+}
+
+body.painel-compacto #btn-pause {
+  min-width: 38px;
+  padding: 8px 0;
+  writing-mode: vertical-rl;
+}
