@@ -32,7 +32,7 @@ const server = http.createServer(async (req, res) => {
 
     await serveStatic(url.pathname, res);
   } catch (erro) {
-    sendText(res, 500, erro.message);
+    sendText(res, erro.statusCode || 500, erro.message);
   }
 });
 
@@ -56,6 +56,16 @@ async function handlePoolsideChat(req, res) {
     return;
   }
 
+  const content = await requestPoolside({ apiKey, model, prompt, stream: true })
+    .catch(async error => {
+      if (!error.poolsideStreamVazio) throw error;
+      return requestPoolside({ apiKey, model, prompt, stream: false });
+    });
+
+  sendJson(res, 200, { content });
+}
+
+async function requestPoolside({ apiKey, model, prompt, stream }) {
   const resposta = await fetch(`${POOLSIDE_BASE_URL}/chat/completions`, {
     method: "POST",
     headers: {
@@ -68,21 +78,28 @@ async function handlePoolsideChat(req, res) {
       temperature: 0.45,
       max_tokens: 800,
       response_format: { type: "json_object" },
-      stream: true
+      stream
     })
   });
 
   if (!resposta.ok) {
     const texto = await resposta.text();
-    sendText(res, resposta.status, texto.slice(0, 400));
-    return;
+    const error = new Error(`Poolside respondeu ${resposta.status}: ${texto.slice(0, 400)}`);
+    error.statusCode = resposta.status;
+    throw error;
   }
 
   const content = resposta.headers.get("content-type")?.includes("text/event-stream")
     ? await readPoolsideStream(resposta)
     : extractPoolsideContent(JSON.parse(await resposta.text()));
 
-  sendJson(res, 200, { content });
+  if (!content.trim()) {
+    const error = new Error("Poolside nao retornou conteudo.");
+    error.poolsideStreamVazio = stream;
+    throw error;
+  }
+
+  return content;
 }
 
 async function serveStatic(pathname, res) {
@@ -140,38 +157,75 @@ async function readPoolsideStream(response) {
   const decoder = new TextDecoder();
   let buffer = "";
   let content = "";
+  let sample = "";
+
+  const processEvent = (event) => {
+    const dataLines = event
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(line => line.startsWith("data:"))
+      .map(line => line.slice(5).trim())
+      .filter(Boolean);
+
+    if (!dataLines.length) return;
+
+    const data = dataLines.join("\n");
+    if (data === "[DONE]") return;
+    sample += `${data}\n`;
+
+    try {
+      const chunk = JSON.parse(data);
+      content += extractPoolsideContent(chunk);
+    } catch {
+      // Ignore incomplete stream fragments.
+    }
+  };
 
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
 
     buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
+    const events = buffer.split(/\r?\n\r?\n/);
+    buffer = events.pop() || "";
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("data:")) continue;
-
-      const data = trimmed.slice(5).trim();
-      if (!data || data === "[DONE]") continue;
-
-      try {
-        const chunk = JSON.parse(data);
-        content += chunk.choices?.[0]?.delta?.content || "";
-      } catch {
-        // Ignore incomplete stream fragments.
-      }
+    for (const event of events) {
+      processEvent(event);
     }
+  }
+
+  if (buffer.trim()) {
+    processEvent(buffer);
+  }
+
+  if (!content.trim()) {
+    const error = new Error(`Poolside stream nao retornou conteudo.${sample ? ` Amostra: ${sample.slice(0, 220)}` : ""}`);
+    error.poolsideStreamVazio = true;
+    throw error;
   }
 
   return content;
 }
 
 function extractPoolsideContent(payload) {
-  return payload.choices?.[0]?.message?.content
-    || payload.choices?.[0]?.text
-    || payload.output_text
-    || payload.output?.[0]?.content?.[0]?.text
+  const choice = payload.choices?.[0] || {};
+
+  return textFromContent(choice.delta?.content)
+    || textFromContent(choice.delta?.reasoning_content)
+    || textFromContent(choice.message?.content)
+    || textFromContent(choice.text)
+    || textFromContent(payload.output_text)
+    || textFromContent(payload.content)
+    || textFromContent(payload.output?.[0]?.content)
     || "";
+}
+
+function textFromContent(value) {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    return value.map(part => textFromContent(part?.text || part?.content || part)).join("");
+  }
+
+  return textFromContent(value.text || value.content);
 }

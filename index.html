@@ -12,28 +12,40 @@
   <aside id="painel" aria-label="Painel da simulacao">
     <header class="painel-topo">
       <div>
-        <p>Simulacao social</p>
+        <p>Simulacao autonoma de IAs</p>
         <h1>Mundo Vivo</h1>
       </div>
       <button id="btn-pause" class="btn-secundario" title="Pausar ou retomar com Esc">Pausar</button>
     </header>
 
     <section class="stats-grid" aria-label="Resumo">
-      <div>
-        <span>Dia</span>
-        <strong id="dia">1</strong>
-      </div>
-      <div>
-        <span>Populacao</span>
-        <strong id="populacao">0</strong>
-      </div>
-      <div>
-        <span>Estado</span>
-        <strong id="status-simulacao">Rodando</strong>
-      </div>
+      <div><span>Dia</span><strong id="dia">1</strong></div>
+      <div><span>Populacao</span><strong id="populacao">0</strong></div>
+      <div><span>Era</span><strong id="era">-</strong></div>
+      <div><span>Estado</span><strong id="status-simulacao">Rodando</strong></div>
     </section>
 
-    <button id="btn-dia" class="btn-primario">Passar 1 dia</button>
+    <div class="botoes-linha">
+      <button id="btn-dia" class="btn-primario">Passar 1 dia</button>
+      <button id="btn-salvar" class="btn-secundario">Salvar</button>
+      <button id="btn-novo" class="btn-secundario" title="Apaga o save e gera um novo mundo">Novo</button>
+    </div>
+
+    <section class="painel-secao">
+      <h2>Controles</h2>
+      <label class="campo">
+        <span>Velocidade da simulacao</span>
+        <div id="vel-controls" class="seg-controls">
+          <button data-vel="1" class="seg-btn is-on">1x</button>
+          <button data-vel="2" class="seg-btn">2x</button>
+          <button data-vel="4" class="seg-btn">4x</button>
+        </div>
+      </label>
+      <label class="campo">
+        <span>IAs simultaneas: <em id="conc-valor">5</em></span>
+        <input id="ia-concorrencia" type="range" min="1" max="8" step="1" value="5">
+      </label>
+    </section>
 
     <section class="painel-secao ia-config">
       <h2>IA</h2>
@@ -62,7 +74,13 @@
         </label>
       </div>
       <button id="btn-save-ia" class="btn-secundario">Salvar IA</button>
-      <p id="ia-status" class="ia-status">Instinto local ativo se a IA falhar.</p>
+      <p id="ia-status" class="ia-status">Instinto local mantem o mundo vivo se a IA falhar.</p>
+    </section>
+
+    <section class="painel-secao">
+      <h2>Tribos</h2>
+      <div id="lista-tribos" class="lista-tribos"></div>
+      <p id="estruturas-resumo" class="resumo-estruturas"></p>
     </section>
 
     <section class="painel-secao">

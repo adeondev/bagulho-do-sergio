@@ -154,13 +154,25 @@ async function completarComPoolsideViaProxy(prompt, config) {
 }
 
 async function completarComPoolsideDireto(prompt, config) {
+  try {
+    return await requisitarPoolsideDireto(prompt, config, true);
+  } catch (erroStream) {
+    if (!erroStream.poolsideStreamVazio) {
+      throw erroStream;
+    }
+  }
+
+  return requisitarPoolsideDireto(prompt, config, false);
+}
+
+async function requisitarPoolsideDireto(prompt, config, stream) {
   const resposta = await fetch(`${POOLSIDE_BASE_URL}/chat/completions`, {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${config.poolsideApiKey}`,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify(criarPayloadPoolside(prompt, config.poolsideModel))
+    body: JSON.stringify(criarPayloadPoolside(prompt, config.poolsideModel, stream))
   });
 
   if (!resposta.ok) {
@@ -182,7 +194,7 @@ async function completarComPoolsideDireto(prompt, config) {
   return texto;
 }
 
-function criarPayloadPoolside(prompt, model) {
+function criarPayloadPoolside(prompt, model, stream = true) {
   return {
     model,
     messages: [
@@ -194,7 +206,7 @@ function criarPayloadPoolside(prompt, model) {
     temperature: 0.45,
     max_tokens: 800,
     response_format: { type: "json_object" },
-    stream: true
+    stream
   };
 }
 
@@ -207,44 +219,77 @@ async function lerStreamPoolside(resposta) {
   const decoder = new TextDecoder();
   let buffer = "";
   let content = "";
+  let amostra = "";
+
+  const processarEvento = (evento) => {
+    const dados = evento
+      .split(/\r?\n/)
+      .map(linha => linha.trim())
+      .filter(linha => linha.startsWith("data:"))
+      .map(linha => linha.slice(5).trim())
+      .filter(Boolean);
+
+    if (!dados.length) return;
+
+    const data = dados.join("\n");
+    if (data === "[DONE]") return;
+    amostra += `${data}\n`;
+
+    try {
+      const chunk = JSON.parse(data);
+      content += extrairConteudoPoolside(chunk);
+    } catch {
+      // Alguns servidores enviam keep-alive ou fragmentos incompletos.
+    }
+  };
 
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
 
     buffer += decoder.decode(value, { stream: true });
-    const linhas = buffer.split("\n");
-    buffer = linhas.pop() || "";
+    const eventos = buffer.split(/\r?\n\r?\n/);
+    buffer = eventos.pop() || "";
 
-    for (const linha of linhas) {
-      const trimmed = linha.trim();
-      if (!trimmed.startsWith("data:")) continue;
-
-      const data = trimmed.slice(5).trim();
-      if (!data || data === "[DONE]") continue;
-
-      try {
-        const chunk = JSON.parse(data);
-        content += chunk.choices?.[0]?.delta?.content || "";
-      } catch {
-        // Chunk parcial ou keep-alive invalido; o proximo pacote completa.
-      }
+    for (const evento of eventos) {
+      processarEvento(evento);
     }
   }
 
+  if (buffer.trim()) {
+    processarEvento(buffer);
+  }
+
   if (!content.trim()) {
-    throw new Error("Poolside stream nao retornou conteudo.");
+    const erro = new Error(`Poolside stream nao retornou conteudo. Tentando sem stream.${amostra ? ` Amostra: ${amostra.slice(0, 220)}` : ""}`);
+    erro.poolsideStreamVazio = true;
+    throw erro;
   }
 
   return content;
 }
 
 function extrairConteudoPoolside(payload) {
-  return payload.choices?.[0]?.message?.content
-    || payload.choices?.[0]?.text
-    || payload.output_text
-    || payload.output?.[0]?.content?.[0]?.text
+  const escolha = payload.choices?.[0] || {};
+
+  return textoDeConteudo(escolha.delta?.content)
+    || textoDeConteudo(escolha.delta?.reasoning_content)
+    || textoDeConteudo(escolha.message?.content)
+    || textoDeConteudo(escolha.text)
+    || textoDeConteudo(payload.output_text)
+    || textoDeConteudo(payload.content)
+    || textoDeConteudo(payload.output?.[0]?.content)
     || "";
+}
+
+function textoDeConteudo(valor) {
+  if (!valor) return "";
+  if (typeof valor === "string") return valor;
+  if (Array.isArray(valor)) {
+    return valor.map(parte => textoDeConteudo(parte?.text || parte?.content || parte)).join("");
+  }
+
+  return textoDeConteudo(valor.text || valor.content);
 }
 
 function deveTentarProxyLocal() {

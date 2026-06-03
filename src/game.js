@@ -1,24 +1,31 @@
-import { GAME_HEIGHT, GAME_WIDTH, NOMES } from "./config.js";
+import { GAME_HEIGHT, GAME_WIDTH, NOMES, TRIBOS, BALANCE, ALDEIA_X, ALDEIA_Y } from "./config.js";
 import { registrarAssets } from "./assets.js";
 import { Mundo } from "./mundo.js";
 import { Habitante } from "./habitante.js";
-import { decidirAcaoComIA, decidirInteracaoComIA, modoIaAutonomoAtivo } from "./ia.js";
+import { Estruturas } from "./estruturas.js";
+import { Fauna } from "./fauna.js";
+import { decidirAcaoComIA, decidirInteracaoComIA, executarEmLote } from "./ia.js";
+import { ESTRUTURAS, FERRAMENTAS } from "./definicoes.js";
 import { adicionarEvento, atualizarPainel, configurarPainel, setEstadoPausa } from "./ui.js";
-import { aleatorio, distancia } from "./utils.js";
+import { aleatorio, distancia, distanciaTiles, escolher, iso } from "./utils.js";
 import { nomeProvedor } from "./provedoresIa.js";
+import { salvar, carregar, apagar, temSave } from "./persistencia.js";
 
-let cena;
-let mundo;
+let cena, mundo, estruturas, fauna;
 let habitantes = [];
 let habitanteSelecionado = null;
+
+const estado = { era: 0, guerra: false, parGuerra: null };
 let tempo = 0;
+let relogioDia = 0;
 let uiTimer = 0;
 let interacaoTimer = 0;
-let acaoLivreTimer = 0;
+let decisaoTimer = 0;
+let autosaveTimer = 0;
 let interacaoProcessando = false;
-let acaoLivreProcessando = false;
-let processandoDia = false;
+let decisaoProcessando = false;
 let pausado = false;
+let concorrencia = 5;
 let ultimoCliqueHabitante = 0;
 let controlesCamera;
 
@@ -27,516 +34,651 @@ const config = {
   width: GAME_WIDTH,
   height: GAME_HEIGHT,
   parent: "game-container",
-  backgroundColor: "#13201d",
-  scene: {
-    preload,
-    create,
-    update
-  }
+  backgroundColor: "#0f1a17",
+  scene: { preload, create, update }
 };
 
 new Phaser.Game(config);
 
-function preload() {
-  registrarAssets(this);
-}
+function preload() { registrarAssets(this); }
 
 function create() {
   cena = this;
-  this.cameras.main.setZoom(0.82);
+  this.simVelocidade = 1;
+  this.cameras.main.setZoom(0.8);
 
-  mundo = new Mundo(this);
+  const save = carregar();
+  const seed = save ? save.seed : (Math.random() * 1e9) | 0;
+
+  mundo = new Mundo(this, seed);
   this.mundo = mundo;
   mundo.desenhar();
 
-  configurarCamera(this);
-  criarHabitantes(this, 8);
-  configurarInterface();
+  estruturas = new Estruturas(this, mundo);
+  fauna = new Fauna(this, mundo);
 
-  atualizarPainel(mundo, habitantes, { selecionado: habitanteSelecionado, pausado });
-  adicionarEvento(mundo, "O mundo cresceu. Os habitantes agora caminham por rotas livres e observam o terreno.");
+  configurarCamera(this);
+
+  if (save) {
+    carregarMundoSalvo(save);
+    adicionarEvento(mundo, `Mundo restaurado: dia ${mundo.dia}, era ${nomeEra(estado.era)}.`);
+  } else {
+    criarHabitantesNovos(this, 20);
+    fauna.povoar(60);
+    adicionarEvento(mundo, "Um novo mundo nasceu. As tribos comecam a explorar e sobreviver.");
+  }
+
+  configurarInterface();
+  atualizarPainel(contextoPainel());
+
+  // Handle de debug no console: window.MundoVivo.habitantes, .estruturas, .estado
+  window.MundoVivo = {
+    get habitantes() { return habitantes; },
+    get estruturas() { return estruturas; },
+    get fauna() { return fauna; },
+    get estado() { return estado; },
+    get mundo() { return mundo; }
+  };
 }
 
 function update(time, delta) {
   atualizarCamera(delta);
-
+  mundo.atualizarCulling(cena.cameras.main);
   if (pausado) return;
 
-  tempo += delta;
+  const d = delta * (cena.simVelocidade || 1);
+  tempo += d;
+  relogioDia += d;
   uiTimer += delta;
-  acaoLivreTimer += delta;
-  const iaAutonomaAtiva = modoIaAutonomoAtivo();
+  autosaveTimer += delta;
 
-  habitantes.forEach(h => {
-    h.mover(mundo, habitanteChegouNoDestino, delta, !iaAutonomaAtiva);
+  const ctx = contextoIa();
+  for (const h of habitantes) {
+    h.mover(mundo, habitanteChegouNoDestino, delta, false);
+    const ev = h.tickVida(d, ctx);
+    if (ev) adicionarEvento(mundo, ev);
+  }
+
+  fauna.update(d, habitantes, (animal, presa) => {
+    presa.receberDano(animal.def.ataque || 6, `ataque de ${animal.def.nome}`);
+    if (Math.random() < 0.25) adicionarEvento(mundo, `${animal.def.nome} atacou ${presa.nome}!`);
   });
 
-  processarInteracoes(delta, iaAutonomaAtiva);
-  processarAcoesLivres(iaAutonomaAtiva);
+  processarInteracoes(delta);
+  processarDecisoes(delta);
 
-  if (tempo > 16000 && !processandoDia) {
+  if (relogioDia > BALANCE.segundosPorDia * 1000) {
+    relogioDia = 0;
     passarDia();
-    tempo = 0;
   }
 
-  if (uiTimer > 520) {
-    atualizarPainel(mundo, habitantes, { selecionado: habitanteSelecionado, pausado });
-    uiTimer = 0;
+  if (autosaveTimer > 20000) {
+    autosaveTimer = 0;
+    salvarMundo(false);
   }
+
+  if (uiTimer > 480) {
+    uiTimer = 0;
+    atualizarPainel(contextoPainel());
+  }
+}
+
+// ===================== SETUP ===========================================
+function criarHabitantesNovos(scene, quantidade) {
+  for (let i = 0; i < quantidade; i++) {
+    const tribo = TRIBOS[i % TRIBOS.length].id;
+    const ponto = mundo.escolherTileLivreProximo(ALDEIA_X, ALDEIA_Y, 5) || { x: ALDEIA_X, y: ALDEIA_Y };
+    const h = new Habitante(scene, NOMES[i % NOMES.length] + (i >= NOMES.length ? " II" : ""), ponto.x, ponto.y, tribo);
+    registrarCliqueHabitante(h);
+    habitantes.push(h);
+  }
+  selecionarHabitante(habitantes[0]);
+}
+
+function carregarMundoSalvo(save) {
+  mundo.dia = save.dia || 1;
+  estado.era = save.era || 0;
+  estado.guerra = Boolean(save.guerra);
+  relogioDia = save.relogioDia || 0;
+
+  (save.habitantes || []).forEach(d => {
+    const h = new Habitante(cena, d.nome, d.xTile, d.yTile, d.tribo);
+    if (d.textura) { h.textura = d.textura; h.visual.setTexture(d.textura); }
+    h.aplicarEstado(d);
+    const pos = mundo.posicaoHabitante(d.xTile, d.yTile);
+    h.sprite.setPosition(pos.x, pos.y);
+    registrarCliqueHabitante(h);
+    habitantes.push(h);
+  });
+
+  estruturas.restaurar(save.estruturas || []);
+  fauna.restaurar(save.animais || []);
+  if (!fauna.animais.length) fauna.povoar(48);
+  if (habitantes[0]) selecionarHabitante(habitantes[0]);
+}
+
+function registrarCliqueHabitante(h) {
+  h.sprite.on("pointerdown", (pointer, lx, ly, event) => {
+    ultimoCliqueHabitante = performance.now();
+    if (event) event.stopPropagation();
+    selecionarHabitante(h);
+  });
 }
 
 function configurarInterface() {
   configurarPainel({
     aoSelecionarHabitante: nome => {
-      const habitante = habitantes.find(h => h.nome === nome);
-      if (habitante) selecionarHabitante(habitante);
+      const h = habitantes.find(x => x.nome === nome);
+      if (h) selecionarHabitante(h);
     },
-    aoConfigIaMudou: config => {
-      adicionarEvento(mundo, `Modo de IA alterado para ${nomeProvedor(config.provider)}.`);
-      atualizarPainel(mundo, habitantes, { selecionado: habitanteSelecionado, pausado });
-    }
+    aoConfigIaMudou: cfg => {
+      adicionarEvento(mundo, `Modo de IA: ${nomeProvedor(cfg.provider)}.`);
+      atualizarPainel(contextoPainel());
+    },
+    aoMudarVelocidade: v => { cena.simVelocidade = v; },
+    aoMudarConcorrencia: v => { concorrencia = v; },
+    aoSalvar: () => { salvarMundo(true); adicionarEvento(mundo, "Mundo salvo."); },
+    aoNovoMundo: novoMundo
   });
 
-  document.getElementById("btn-dia").addEventListener("click", async () => {
-    await passarDia();
-  });
+  document.getElementById("btn-dia")?.addEventListener("click", () => passarDia());
+  document.getElementById("btn-pause")?.addEventListener("click", alternarPausa);
 
-  document.getElementById("btn-pause").addEventListener("click", alternarPausa);
-
-  window.addEventListener("ia-error", evento => {
-    const detail = evento.detail || {};
-    adicionarEvento(mundo, `${detail.provider || "IA"} falhou: ${detail.message || "erro desconhecido"}`);
+  window.addEventListener("ia-error", e => {
+    const detail = e.detail || {};
+    adicionarEvento(mundo, `${detail.provider || "IA"} falhou: ${detail.message || "erro"}. Usando instinto.`);
   });
+  window.addEventListener("beforeunload", () => salvarMundo(false));
 
   cena.input.keyboard.on("keydown-ESC", alternarPausa);
-
   cena.input.on("pointerdown", pointer => {
-    if (!habitanteSelecionado || !habitanteSelecionado.vivo) return;
     if (performance.now() - ultimoCliqueHabitante < 120) return;
     if (pointer.rightButtonDown()) return;
-
-    if (modoIaAutonomoAtivo()) {
-      adicionarEvento(mundo, "Modo IA autonomo ativo: habitantes so se movem por decisao da IA.");
-      return;
-    }
-
-    const tile = mundo.tilePorTela(pointer.worldX, pointer.worldY);
-
-    if (!mundo.isWalkable(tile.x, tile.y)) {
-      adicionarEvento(mundo, "Ponto bloqueado no mapa.");
-      return;
-    }
-
-    const ok = habitanteSelecionado.definirDestinoTile(
-      tile,
-      mundo,
-      `explorar ${mundo.descreverTile(tile.x, tile.y)}`,
-      null,
-      false
-    );
-
-    if (ok) {
-      adicionarEvento(mundo, `${habitanteSelecionado.nome} decidiu explorar um ponto livre do mapa.`);
-      atualizarPainel(mundo, habitantes, { selecionado: habitanteSelecionado, pausado });
-    }
   });
 }
 
+function novoMundo() {
+  apagar();
+  window.location.reload();
+}
+
+// ===================== CAMERA ==========================================
 function configurarCamera(scene) {
   const limites = mundo.limitesMundo();
-
   scene.cameras.main.setBounds(limites.x, limites.y, limites.width, limites.height);
-  scene.cameras.main.centerOn(650, 620);
+  const centro = iso(ALDEIA_X, ALDEIA_Y);
+  scene.cameras.main.centerOn(centro.x, centro.y);
 
   controlesCamera = {
     cursores: scene.input.keyboard.createCursorKeys(),
-    teclas: scene.input.keyboard.addKeys({
-      w: "W",
-      a: "A",
-      s: "S",
-      d: "D"
-    })
+    teclas: scene.input.keyboard.addKeys({ w: "W", a: "A", s: "S", d: "D" })
   };
 
   scene.input.mouse.disableContextMenu();
-  scene.input.on("wheel", (pointer, objetos, deltaX, deltaY) => {
-    const camera = scene.cameras.main;
-    const zoom = Phaser.Math.Clamp(camera.zoom - deltaY * 0.0012, 0.58, 1.28);
-    camera.setZoom(zoom);
+  scene.input.on("wheel", (pointer, objetos, dX, dY) => {
+    const cam = scene.cameras.main;
+    cam.setZoom(Phaser.Math.Clamp(cam.zoom - dY * 0.0012, 0.34, 1.3));
   });
-
   scene.input.on("pointermove", pointer => {
     if (!pointer.rightButtonDown()) return;
-
-    const camera = scene.cameras.main;
-    const anterior = pointer.prevPosition || pointer.position;
-    const dx = pointer.x - anterior.x;
-    const dy = pointer.y - anterior.y;
-
-    camera.scrollX -= dx / camera.zoom;
-    camera.scrollY -= dy / camera.zoom;
+    pararSeguir(); // arrastar com o botao direito cancela o seguir
+    const cam = scene.cameras.main;
+    const ant = pointer.prevPosition || pointer.position;
+    cam.scrollX -= (pointer.x - ant.x) / cam.zoom;
+    cam.scrollY -= (pointer.y - ant.y) / cam.zoom;
   });
 }
 
 function atualizarCamera(delta) {
   if (!controlesCamera || !cena) return;
-
-  const camera = cena.cameras.main;
-  const velocidade = 0.62 * delta / camera.zoom;
+  const cam = cena.cameras.main;
+  const vel = 0.85 * delta / cam.zoom;
   const { cursores, teclas } = controlesCamera;
-
-  if (cursores.left.isDown || teclas.a.isDown) camera.scrollX -= velocidade;
-  if (cursores.right.isDown || teclas.d.isDown) camera.scrollX += velocidade;
-  if (cursores.up.isDown || teclas.w.isDown) camera.scrollY -= velocidade;
-  if (cursores.down.isDown || teclas.s.isDown) camera.scrollY += velocidade;
+  const esq = cursores.left.isDown || teclas.a.isDown;
+  const dir = cursores.right.isDown || teclas.d.isDown;
+  const cima = cursores.up.isDown || teclas.w.isDown;
+  const baixo = cursores.down.isDown || teclas.s.isDown;
+  if (esq || dir || cima || baixo) pararSeguir(); // controle manual cancela o seguir
+  if (esq) cam.scrollX -= vel;
+  if (dir) cam.scrollX += vel;
+  if (cima) cam.scrollY -= vel;
+  if (baixo) cam.scrollY += vel;
 }
 
-function criarHabitantes(scene, quantidade) {
-  const pontos = [
-    { x: 12, y: 14 }, { x: 11, y: 15 }, { x: 13, y: 15 }, { x: 12, y: 16 },
-    { x: 10, y: 14 }, { x: 14, y: 14 }, { x: 11, y: 13 }, { x: 13, y: 13 }
-  ];
+function selecionarHabitante(h, voar = true) {
+  habitanteSelecionado = h;
+  habitantes.forEach(x => x.setSelecionado(x === h));
 
-  for (let i = 0; i < quantidade; i++) {
-    const ponto = pontos[i] ?? mundo.escolherTileLivreProximo(12, 14, 4);
-    const habitante = new Habitante(scene, NOMES[i], ponto.x, ponto.y);
+  // Teleporta a camera ate o habitante e passa a segui-lo.
+  if (h && h.vivo && cena && voar) {
+    const cam = cena.cameras.main;
+    cam.stopFollow();
+    cam.centerOn(h.sprite.x, h.sprite.y);
+    cam.startFollow(h.sprite, true, 0.12, 0.12);
+    cam.flash(180, 246, 220, 140, true);
+  }
+  atualizarPainel(contextoPainel());
+}
 
-    habitante.sprite.on("pointerdown", (pointer, localX, localY, event) => {
-      ultimoCliqueHabitante = performance.now();
-      if (event) event.stopPropagation();
-      selecionarHabitante(habitante);
-    });
+function pararSeguir() {
+  cena?.cameras?.main?.stopFollow();
+}
 
-    habitantes.push(habitante);
+// ===================== CONTEXTO ========================================
+function contextoIa() {
+  return { mundo, estruturas, fauna, era: estado.era, guerra: estado.guerra };
+}
+
+function contextoPainel() {
+  return {
+    mundo, habitantes, estruturas, fauna,
+    selecionado: habitanteSelecionado, pausado,
+    era: estado.era, eraNome: nomeEra(estado.era), guerra: estado.guerra,
+    tribos: resumoTribos(), concorrencia, velocidade: cena?.simVelocidade || 1
+  };
+}
+
+function nomeEra(i) {
+  return ["Sobrevivencia", "Ferramentas", "Assentamento", "Construcao", "Sociedade", "Conflito"][i] || "?";
+}
+
+// ===================== DECISOES (IA paralela) ==========================
+function processarDecisoes(delta) {
+  decisaoTimer += delta;
+  if (decisaoProcessando || decisaoTimer < 550) return;
+  decisaoTimer = 0;
+
+  const ociosos = habitantes.filter(h =>
+    h.vivo && !h.caminho.length && !h.acaoPendente && h.tempoConversa <= 0 && h.tempoOcioso > h.proximoPasseioEm
+  );
+  if (!ociosos.length) return;
+
+  ociosos.sort((a, b) => b.tempoOcioso - a.tempoOcioso);
+  const lote = ociosos.slice(0, Math.max(1, concorrencia));
+  lote.forEach(h => { h.tempoOcioso = 0; });
+
+  decisaoProcessando = true;
+  const ctx = contextoIa();
+  executarEmLote(lote, concorrencia, async (h) => {
+    if (!h.vivo) return;
+    const acao = await decidirAcaoComIA(h, mundo, habitantes, ctx);
+    if (acao) executarAcaoAutonoma(h, acao);
+  }).catch(e => console.warn("Decisoes:", e)).finally(() => { decisaoProcessando = false; });
+}
+
+function executarAcaoAutonoma(h, acao) {
+  if (!h.vivo || !acao) return;
+  h.acaoPendente = acao;
+  h.objetivoAtual = acao.acao;
+  h.pensamento = acao.motivo;
+  h.registrarAcao({ ...acao, dia: mundo.dia });
+  if (acao.fala) h.falar(acao.fala);
+
+  const alvo = acao.alvoHabitante ? habitantes.find(x => x.nome === acao.alvoHabitante && x.vivo) : null;
+
+  if (alvo && distancia(h.sprite, alvo.sprite) <= 80) {
+    resolverComAlvo(h, alvo, acao);
+    h.acaoPendente = null;
+    return;
   }
 
-  selecionarHabitante(habitantes[0]);
-}
-
-function selecionarHabitante(habitante) {
-  habitanteSelecionado = habitante;
-
-  habitantes.forEach(h => h.setSelecionado(h === habitante));
-  atualizarPainel(mundo, habitantes, { selecionado: habitanteSelecionado, pausado });
-}
-
-async function passarDia() {
-  if (processandoDia) return;
-
-  processandoDia = true;
-  mundo.dia++;
-
-  for (const h of habitantes) {
-    if (!h.vivo) continue;
-
-    h.passarNecessidades();
-
-    if (!h.vivo) {
-      adicionarEvento(mundo, `${h.nome} morreu.`);
-      continue;
-    }
-
-    const acao = await decidirAcaoComIA(h, mundo, habitantes);
-    if (!acao) {
-      adicionarEvento(mundo, `${h.nome} ficou aguardando a IA.`);
-      continue;
-    }
-
-    executarAcaoAutonoma(h, acao);
+  // Tarefas imediatas (sem deslocamento).
+  if (!alvo && !acao.destinoTile && !acao.destinoLocalId) {
+    const r = resolverTarefa(h, null, acao);
+    h.acaoPendente = null;
+    if (r) adicionarEvento(mundo, `${h.nome}: ${r}.`);
+    return;
   }
 
-  atualizarPainel(mundo, habitantes, { selecionado: habitanteSelecionado, pausado });
-  processandoDia = false;
+  let ok = false;
+  if (alvo) {
+    const destino = mundo.tileValidoMaisProximo(alvo.xTile, alvo.yTile, 4);
+    ok = destino && h.definirDestinoTile(destino, mundo, acao.acao, null, false);
+  } else if (acao.destinoTile) {
+    ok = h.definirDestinoTile(acao.destinoTile, mundo, acao.acao, null, false);
+  } else if (acao.destinoLocalId) {
+    const local = mundo.buscarLocalPorId(acao.destinoLocalId);
+    ok = local && h.definirDestino(local, mundo);
+  }
+
+  if (!ok) {
+    const r = resolverTarefa(h, null, acao);
+    h.acaoPendente = null;
+    if (r) adicionarEvento(mundo, `${h.nome}: ${r}.`);
+  }
 }
 
-function habitanteChegouNoDestino(habitante) {
-  const local = mundo.buscarLocalPorId(habitante.destinoLocalId);
-  const acao = habitante.acaoPendente;
+function habitanteChegouNoDestino(h) {
+  const acao = h.acaoPendente;
+  if (!acao) {
+    const local = mundo.buscarLocalPorId(h.destinoLocalId);
+    if (local) { const r = h.observarLocal(local); if (r) h.falar(r); }
+    return;
+  }
 
-  if (!local && !acao) return;
-
+  const alvo = acao.alvoHabitante ? habitantes.find(x => x.nome === acao.alvoHabitante && x.vivo) : null;
   let resultado = "";
-
-  if (acao?.alvoHabitante) {
-    const alvo = habitantes.find(h => h.nome === acao.alvoHabitante && h.vivo);
-    if (alvo && distancia(habitante.sprite, alvo.sprite) <= 110) {
-      resultado = executarInteracaoAutonoma(habitante, alvo, acao);
-    }
+  if (alvo && distancia(h.sprite, alvo.sprite) <= 130) {
+    resultado = resolverComAlvo(h, alvo, acao);
+  } else {
+    const local = acao.destinoLocalId ? mundo.buscarLocalPorId(acao.destinoLocalId) : null;
+    resultado = resolverTarefa(h, local, acao);
   }
 
-  if (!resultado) {
-    resultado = acao
-      ? executarAcaoNoLocal(habitante, local, acao)
-      : habitante.observarLocal(local, mundo);
-  }
-
-  habitante.acaoPendente = null;
-
-  if (resultado && !acao) {
-    habitante.falar(resultado);
-  }
-
-  if (resultado) {
-    adicionarEvento(mundo, `${habitante.nome}: ${resultado}.`);
-  }
-
-  atualizarPainel(mundo, habitantes, { selecionado: habitanteSelecionado, pausado });
+  h.acaoPendente = null;
+  if (resultado) adicionarEvento(mundo, `${h.nome}: ${resultado}.`);
+  atualizarPainel(contextoPainel());
 }
 
-function processarInteracoes(delta, iaAutonomaAtiva = modoIaAutonomoAtivo()) {
+// ===================== RESOLUCAO DE TAREFAS ============================
+function resolverTarefa(h, local, acao) {
+  switch (acao.tarefa) {
+    case "beber":
+      if (local && local.tipo === "agua") return h.observarLocal(local);
+      h.sede = Math.max(0, h.sede - 30);
+      return "bebeu agua";
+
+    case "comer": {
+      const fazenda = estruturas.efeitoPerto(h.xTile, h.yTile, "comida");
+      if (fazenda) { const q = fazenda.colher(); if (q) { h.inventario.comida += q; h.fome = Math.max(0, h.fome - 20); return `colheu ${q} comida na fazenda`; } }
+      if (local) return h.observarLocal(local);
+      return h.coletarNoTile(mundo) || "procurou comida";
+    }
+
+    case "coletar":
+    case "observar":
+      if (local) return h.observarLocal(local);
+      return h.coletarNoTile(mundo) || "observou o terreno";
+
+    case "descansar":
+      if (local && local.tipo === "moradia") return h.observarLocal(local);
+      h.energia = Math.min(100, h.energia + 20);
+      return "descansou um pouco";
+
+    case "construir": {
+      const tipo = acao.tipoConstrucao;
+      if (!tipo || !ESTRUTURAS[tipo]) return "tentou construir mas nao sabia o que";
+      const e = estruturas.construir(h, tipo, h.xTile, h.yTile);
+      if (e) {
+        h.adicionarConhecimento(`construi ${ESTRUTURAS[tipo].nome.toLowerCase()}`);
+        verificarEra();
+        return `construiu ${ESTRUTURAS[tipo].nome} (${e.x},${e.y})`;
+      }
+      return `nao conseguiu construir ${ESTRUTURAS[tipo].nome.toLowerCase()} (faltou material ou espaco)`;
+    }
+
+    case "craftar": {
+      const id = acao.tipoFerramenta;
+      if (!id || !FERRAMENTAS[id]) return "tentou fabricar algo desconhecido";
+      if (id === "espada" && !estruturas.efeitoPerto(h.xTile, h.yTile, "ferramentas")) {
+        return "precisa de uma oficina para forjar a espada";
+      }
+      if (h.craftar(id)) { verificarEra(); return `fabricou ${FERRAMENTAS[id].nome}`; }
+      return `nao conseguiu fabricar ${FERRAMENTAS[id].nome.toLowerCase()}`;
+    }
+
+    case "cacar": {
+      const animal = fauna.animalCacavelPerto(h.xTile, h.yTile, 2.4);
+      if (!animal) return "nao achou animal para cacar";
+      const dano = 8 + h.bonusAtaque() + aleatorio(0, 6);
+      const morreu = animal.receberDano(dano);
+      h.energia = Math.max(0, h.energia - 4);
+      if (morreu) {
+        const carne = (animal.def.carne || 1) + h.bonusColeta("comida");
+        h.inventario.comida += carne;
+        h.fome = Math.max(0, h.fome - 14);
+        h.adicionarConhecimento("caca rende carne");
+        return `cacou um ${animal.def.nome.toLowerCase()} e ganhou ${carne} carne`;
+      }
+      return `feriu um ${animal.def.nome.toLowerCase()}`;
+    }
+
+    case "socializar":
+      return "procurou companhia";
+
+    case "atacar":
+      return "procurou um alvo, mas ele sumiu";
+
+    default:
+      if (local) return h.observarLocal(local);
+      return "observou ao redor";
+  }
+}
+
+function resolverComAlvo(h, alvo, acao) {
+  const hostil = acao.categoria === "hostil" || acao.tarefa === "atacar";
+
+  if (hostil) {
+    const dano = h.atacar(alvo, acao.acao);
+    let extra = "";
+    // Roubo de recurso.
+    if (/roub|tomar|saque|comida/i.test(acao.acao)) {
+      const rec = ["comida", "madeira", "pedra"].find(r => alvo.inventario[r] > 0);
+      if (rec) { alvo.inventario[rec] -= 1; h.inventario[rec] += 1; extra = ` e roubou ${rec}`; }
+    }
+    // Contra-ataque.
+    if (alvo.vivo && (alvo.coragem > 40 || alvo.temArma()) && Math.random() < 0.7) {
+      alvo.atacar(h, "defesa");
+    }
+    registrarTensaoTribo(h, alvo);
+    if (!alvo.vivo) adicionarEvento(mundo, `${alvo.nome} foi derrotado por ${h.nome}.`);
+    return `atacou ${alvo.nome} causando ${dano} de dano${extra}`;
+  }
+
+  // Cooperacao / conversa.
+  if (h.inventario.comida > 0 && alvo.fome > h.fome + 12) {
+    h.inventario.comida -= 1;
+    alvo.inventario.comida += 1;
+    alvo.fome = Math.max(0, alvo.fome - 16);
+    h.ajustarRelacao(alvo.nome, 10);
+    alvo.ajustarRelacao(h.nome, 12);
+    h.moral = Math.min(100, h.moral + 2);
+    return `deu comida para ${alvo.nome}`;
+  }
+
+  h.conversarCom(alvo, acao.fala || "Vamos seguir juntos.");
+  alvo.ajustarRelacao(h.nome, 4);
+  if (h.tribo === alvo.tribo) { h.ajustarRelacao(alvo.nome, 2); }
+  return `conversou com ${alvo.nome}`;
+}
+
+// ===================== INTERACOES POR PROXIMIDADE ======================
+function processarInteracoes(delta) {
   interacaoTimer += delta;
-  if (interacaoTimer < 1250 || interacaoProcessando) return;
+  if (interacaoTimer < 1100 || interacaoProcessando) return;
   interacaoTimer = 0;
 
   for (let i = 0; i < habitantes.length; i++) {
     for (let j = i + 1; j < habitantes.length; j++) {
       const a = habitantes[i];
       const b = habitantes[j];
+      if (!a.vivo || !b.vivo) continue;
+      if (a.acaoPendente || b.acaoPendente) continue;
+      if (distancia(a.sprite, b.sprite) > 86) continue;
 
-      if (!a.podeConversarCom(b)) continue;
-      if (distancia(a.sprite, b.sprite) > 92) continue;
-      if (Math.random() > (iaAutonomaAtiva ? 0.72 : 0.55)) continue;
+      const inimigos = a.tribo !== b.tribo && (estado.guerra || a.relacaoCom(b.nome) < -25);
+      const podem = a.podeConversarCom(b) || inimigos;
+      if (!podem) continue;
+      if (Math.random() > 0.6) continue;
 
       interacaoProcessando = true;
-      executarInteracaoProxima(a, b).finally(() => {
-        interacaoProcessando = false;
-      });
+      executarInteracaoProxima(a, b).finally(() => { interacaoProcessando = false; });
       return;
     }
   }
 }
 
-function processarAcoesLivres(iaAutonomaAtiva = modoIaAutonomoAtivo()) {
-  if (!iaAutonomaAtiva) return;
-  if (processandoDia || acaoLivreProcessando || acaoLivreTimer < 2600) return;
+async function executarInteracaoProxima(a, b) {
+  const ctx = contextoIa();
+  const acaoA = await decidirInteracaoComIA(a, b, mundo, ctx);
+  if (!acaoA) return;
+  const rA = executarInteracaoAutonoma(a, b, acaoA);
 
-  acaoLivreTimer = 0;
+  let rB = "";
+  if (a.vivo && b.vivo && Math.random() < 0.7) {
+    const acaoB = await decidirInteracaoComIA(b, a, mundo, ctx);
+    if (acaoB) rB = executarInteracaoAutonoma(b, a, acaoB);
+  }
+  adicionarEvento(mundo, rB ? `${rA} ${rB}` : rA);
+  atualizarPainel(contextoPainel());
+}
 
-  const candidato = habitantes
-    .filter(h => h.vivo && !h.caminho.length && !h.acaoPendente && h.tempoOcioso > h.proximoPasseioEm)
-    .sort((a, b) => b.tempoOcioso - a.tempoOcioso)[0];
+function executarInteracaoAutonoma(ator, alvo, acao) {
+  if (!acao || !ator.vivo || !alvo.vivo) return "";
+  ator.cooldownConversa = aleatorio(5000, 9500);
+  ator.tempoConversa = 3000;
+  ator.parConversa = alvo.nome;
+  if (acao.fala) ator.falar(acao.fala);
+  ator.registrarAcao({ ...acao, dia: mundo.dia });
 
-  if (!candidato) return;
+  if (acao.categoria === "hostil" || acao.tarefa === "atacar") {
+    const dano = ator.atacar(alvo, acao.acao);
+    if (alvo.vivo && (alvo.coragem > 45 || alvo.temArma()) && Math.random() < 0.6) alvo.atacar(ator, "defesa");
+    registrarTensaoTribo(ator, alvo);
+    if (!alvo.vivo) adicionarEvento(mundo, `${alvo.nome} caiu em combate.`);
+    return `${ator.nome} atacou ${alvo.nome} (${dano} dano).`;
+  }
 
-  acaoLivreProcessando = true;
-  decidirAcaoComIA(candidato, mundo, habitantes)
-    .then(acao => {
-      if (acao) {
-        executarAcaoAutonoma(candidato, acao);
-      } else {
-        adicionarEvento(mundo, `${candidato.nome} ficou parado aguardando a IA.`);
-      }
-    })
-    .catch(erro => {
-      console.warn("Acao livre por IA falhou:", erro);
-    })
-    .finally(() => {
-      acaoLivreProcessando = false;
-    });
+  if (/dar|compart|ajud|oferec/i.test(`${acao.acao} ${acao.efeitoEsperado}`) && ator.inventario.comida > 0) {
+    ator.inventario.comida -= 1;
+    alvo.inventario.comida += 1;
+    alvo.fome = Math.max(0, alvo.fome - 16);
+    ator.ajustarRelacao(alvo.nome, 10);
+    alvo.ajustarRelacao(ator.nome, 10);
+    return `${ator.nome} ajudou ${alvo.nome}.`;
+  }
+
+  const ganho = ator.tribo === alvo.tribo ? 6 : 3;
+  ator.ajustarRelacao(alvo.nome, ganho);
+  alvo.ajustarRelacao(ator.nome, ganho - 1);
+  return `${ator.nome} conversou com ${alvo.nome}.`;
+}
+
+function registrarTensaoTribo(a, b) {
+  if (a.tribo === b.tribo) return;
+  // Espalha um pouco de tensao entre as tribos envolvidas.
+  habitantes.forEach(h => {
+    if (h.tribo === a.tribo) h.ajustarRelacao(b.nome, -2);
+    if (h.tribo === b.tribo) h.ajustarRelacao(a.nome, -2);
+  });
+}
+
+// ===================== DIA / PROGRESSAO / GUERRA =======================
+function passarDia() {
+  mundo.dia++;
+  estruturas.atualizarDia(e => adicionarEvento(mundo, `Uma ${e.def.nome.toLowerCase()} se desfez com o tempo.`));
+  verificarEra();
+  avaliarGuerra();
+  salvarMundo(false);
+  atualizarPainel(contextoPainel());
+}
+
+function somaInventarios(rec) {
+  return habitantes.filter(h => h.vivo).reduce((s, h) => s + (h.inventario[rec] || 0), 0);
+}
+
+function totalFerramentas() {
+  return habitantes.filter(h => h.vivo).reduce((s, h) => s + h.ferramentas.size, 0);
+}
+
+function maiorOdioEntreTribos() {
+  let pior = 0;
+  for (const a of habitantes) {
+    for (const b of habitantes) {
+      if (a === b || a.tribo === b.tribo) continue;
+      pior = Math.max(pior, -a.relacaoCom(b.nome));
+    }
+  }
+  return pior;
+}
+
+function verificarEra() {
+  const tools = totalFerramentas();
+  const estr = estruturas.total;
+  const madeira = somaInventarios("madeira");
+  const pedra = somaInventarios("pedra");
+  const odio = maiorOdioEntreTribos();
+
+  const condicoes = {
+    1: tools >= 1 || (madeira >= 12 && pedra >= 6),
+    2: tools >= 2,
+    3: estr >= 4,
+    4: estr >= 8 && tools >= 5,
+    5: estr >= 12 && odio >= 55
+  };
+
+  while (estado.era < 5 && condicoes[estado.era + 1]) {
+    estado.era++;
+    adicionarEvento(mundo, `🌅 O mundo avancou para a era "${nomeEra(estado.era)}".`);
+  }
+}
+
+function avaliarGuerra() {
+  // Media de relacao entre cada par de tribos; guerra se odio profundo na era de conflito.
+  const piores = {};
+  for (const a of habitantes) {
+    for (const b of habitantes) {
+      if (a === b || a.tribo === b.tribo) continue;
+      const par = [a.tribo, b.tribo].sort().join("-");
+      piores[par] = Math.min(piores[par] ?? 0, a.relacaoCom(b.nome));
+    }
+  }
+  const parPior = Object.entries(piores).sort((x, y) => x[1] - y[1])[0];
+  const emGuerra = estado.era >= 5 && parPior && parPior[1] <= -45;
+
+  if (emGuerra && !estado.guerra) {
+    estado.guerra = true;
+    estado.parGuerra = parPior[0];
+    const [t1, t2] = parPior[0].split("-");
+    adicionarEvento(mundo, `⚔️ GUERRA declarada entre ${nomeTribo(t1)} e ${nomeTribo(t2)}!`);
+  } else if (!emGuerra && estado.guerra) {
+    estado.guerra = false;
+    estado.parGuerra = null;
+    adicionarEvento(mundo, "🕊️ A paz voltou entre as tribos.");
+  }
+}
+
+function nomeTribo(id) {
+  return (TRIBOS.find(t => t.id === id) || {}).nome || id;
+}
+
+function resumoTribos() {
+  return TRIBOS.map(t => {
+    const membros = habitantes.filter(h => h.vivo && h.tribo === t.id);
+    return {
+      id: t.id, nome: t.nome, cor: t.cor,
+      populacao: membros.length,
+      estruturas: estruturas.lista.filter(e => e.tribo === t.id).length,
+      moralMedia: membros.length ? Math.round(membros.reduce((s, h) => s + h.moral, 0) / membros.length) : 0
+    };
+  });
+}
+
+// ===================== SAVE ============================================
+function buildEstado() {
+  return {
+    versao: 2,
+    seed: mundo.seed,
+    dia: mundo.dia,
+    era: estado.era,
+    guerra: estado.guerra,
+    relogioDia,
+    habitantes: habitantes.map(h => h.toJSON()),
+    estruturas: estruturas.toJSON(),
+    animais: fauna.toJSON()
+  };
+}
+
+function salvarMundo(forcar) {
+  salvar(buildEstado());
 }
 
 function alternarPausa() {
   pausado = !pausado;
   setEstadoPausa(pausado);
-
   if (cena) {
-    if (pausado) {
-      cena.tweens.pauseAll();
-    } else {
-      cena.tweens.resumeAll();
-    }
+    if (pausado) cena.tweens.pauseAll();
+    else cena.tweens.resumeAll();
   }
-
-  atualizarPainel(mundo, habitantes, { selecionado: habitanteSelecionado, pausado });
-}
-
-function executarAcaoAutonoma(habitante, acao) {
-  if (!acao) return;
-
-  const alvo = acao.alvoHabitante
-    ? habitantes.find(h => h.nome === acao.alvoHabitante && h.vivo)
-    : null;
-  const local = acao.destinoLocalId ? mundo.buscarLocalPorId(acao.destinoLocalId) : null;
-  const destinoTile = acao.destinoTile;
-
-  habitante.acaoPendente = acao;
-  habitante.objetivoAtual = acao.acao;
-  habitante.pensamento = acao.motivo;
-  habitante.registrarAcao({ ...acao, dia: mundo.dia });
-  habitante.lembrar(`Decidi: ${acao.acao}. Motivo: ${acao.motivo}`);
-
-  if (acao.fala) {
-    habitante.falar(acao.fala);
-  }
-
-  if (alvo && distancia(habitante.sprite, alvo.sprite) <= 100) {
-    const resultado = executarInteracaoAutonoma(habitante, alvo, acao);
-    habitante.acaoPendente = null;
-    adicionarEvento(mundo, resultado);
-    atualizarPainel(mundo, habitantes, { selecionado: habitanteSelecionado, pausado });
-    return;
-  }
-
-  if (alvo) {
-    const destino = mundo.tileValidoMaisProximo(alvo.xTile, alvo.yTile, 4);
-    const ok = destino && habitante.definirDestinoTile(destino, mundo, acao.acao, null, false);
-
-    if (ok) {
-      adicionarEvento(mundo, `${habitante.nome} decidiu: ${acao.acao}, mirando ${alvo.nome}.`);
-      return;
-    }
-  }
-
-  if (destinoTile) {
-    const ok = habitante.definirDestinoTile(destinoTile, mundo, acao.acao, null, false);
-
-    if (ok) {
-      adicionarEvento(mundo, `${habitante.nome} decidiu: ${acao.acao}, indo para (${destinoTile.x}, ${destinoTile.y}).`);
-      return;
-    }
-  }
-
-  if (local) {
-    const ok = habitante.definirDestino(local, mundo);
-
-    if (ok) {
-      habitante.objetivoAtual = acao.acao;
-      adicionarEvento(mundo, `${habitante.nome} decidiu: ${acao.acao} em ${local.nome}.`);
-      return;
-    }
-  }
-
-  const resultado = executarAcaoNoLocal(habitante, null, acao);
-  habitante.acaoPendente = null;
-  adicionarEvento(mundo, `${habitante.nome}: ${resultado}.`);
-}
-
-function executarAcaoNoLocal(habitante, local, acao) {
-  const texto = `${acao.categoria} ${acao.acao} ${acao.efeitoEsperado}`.toLowerCase();
-  let resultado = `${acao.acao}: ${acao.efeitoEsperado}`;
-
-  if (local && !habitante.mapaConhecido.includes(local.id)) {
-    habitante.mapaConhecido.push(local.id);
-  }
-
-  if (local?.tipo === "agua" && menciona(texto, ["agua", "beber", "sede", "lago", "rio"])) {
-    habitante.ajustarNecessidade("sede", -55);
-    resultado = `${acao.acao}; a sede diminuiu`;
-    habitante.adicionarConhecimento(`${local.nome} fornece agua`);
-  } else if (local?.tipo === "moradia" && menciona(texto, ["descans", "dorm", "segur", "recuper"])) {
-    habitante.ajustarNecessidade("energia", 38);
-    resultado = `${acao.acao}; recuperou energia`;
-    habitante.adicionarConhecimento(`${local.nome} ajuda a descansar`);
-  } else if (local && ["floresta", "campo"].includes(local.tipo) && menciona(texto, ["com", "frut", "caca", "alimento", "fome", "colet"])) {
-    const comida = aleatorio(1, 3);
-    habitante.inventario.comida += comida;
-    habitante.ajustarNecessidade("fome", -18 * comida);
-    resultado = `${acao.acao}; encontrou ${comida} alimento(s)`;
-    habitante.adicionarConhecimento(`${local.nome} pode sustentar comida`);
-  } else if (local?.tipo === "floresta" && menciona(texto, ["madeira", "galho", "abrigo", "colet"])) {
-    habitante.inventario.madeira += aleatorio(1, 2);
-    resultado = `${acao.acao}; juntou madeira`;
-    habitante.adicionarConhecimento("floresta fornece madeira");
-  } else if (local?.tipo === "pedras" && menciona(texto, ["pedra", "ferrament", "rocha", "colet"])) {
-    habitante.inventario.pedra += aleatorio(1, 2);
-    resultado = `${acao.acao}; juntou pedra`;
-    habitante.adicionarConhecimento("pedras podem virar ferramentas");
-  } else if (acao.categoria === "hostil") {
-    habitante.ajustarNecessidade("energia", -12);
-    resultado = `${acao.acao}; a tensao aumentou`;
-  } else if (acao.categoria === "criativa") {
-    habitante.ajustarNecessidade("energia", -5);
-    habitante.curiosidade = Math.min(100, habitante.curiosidade + 3);
-    resultado = `${acao.acao}; criou uma nova ideia`;
-  } else {
-    habitante.ajustarNecessidade("energia", -4);
-  }
-
-  habitante.pensamento = `${acao.motivo} Resultado: ${resultado}.`;
-  habitante.objetivoAtual = acao.acao;
-  habitante.lembrar(resultado);
-  habitante.registrarAcao({ ...acao, motivo: resultado, dia: mundo.dia });
-
-  return resultado;
-}
-
-async function executarInteracaoProxima(a, b) {
-  const acaoA = await decidirInteracaoComIA(a, b, mundo);
-  if (!acaoA) return;
-
-  const resultadoA = executarInteracaoAutonoma(a, b, acaoA);
-
-  let resultadoB = "";
-  if (b.vivo && a.vivo && Math.random() < 0.75) {
-    const acaoB = await decidirInteracaoComIA(b, a, mundo);
-    if (acaoB) {
-      resultadoB = executarInteracaoAutonoma(b, a, acaoB);
-    }
-  }
-
-  adicionarEvento(mundo, resultadoB ? `${resultadoA} ${resultadoB}` : resultadoA);
-  atualizarPainel(mundo, habitantes, { selecionado: habitanteSelecionado, pausado });
-}
-
-function executarInteracaoAutonoma(ator, alvo, acao) {
-  if (!acao) return "";
-
-  ator.cooldownConversa = aleatorio(6500, 11500);
-  ator.tempoConversa = 3200;
-  ator.parConversa = alvo.nome;
-  ator.pensamento = `${acao.acao}: ${acao.motivo}`;
-  ator.lembrar(`${acao.acao}: ${acao.motivo}`);
-  ator.ajustarRelacao(alvo.nome, 2);
-
-  if (acao.fala) {
-    ator.falar(acao.fala);
-  }
-
-  ator.registrarAcao({ ...acao, dia: mundo.dia });
-
-  if (acao.categoria === "hostil" || menciona(`${acao.acao} ${acao.efeitoEsperado}`, ["atac", "roub", "ameac", "empurr", "ferir", "conflito"])) {
-    const dano = Math.max(1, Math.round(acao.intensidade / 9));
-    alvo.receberDano(dano, acao.acao);
-    ator.ajustarRelacao(alvo.nome, -12 - Math.round(acao.intensidade / 8));
-    alvo.ajustarRelacao(ator.nome, -18 - Math.round(acao.intensidade / 6));
-    ator.ajustarNecessidade("energia", -8);
-
-    if (menciona(acao.acao, ["roub", "tomar", "pegar"])) {
-      transferirRecurso(alvo, ator);
-    }
-
-    return `${ator.nome} teve uma acao hostil com ${alvo.nome}: ${acao.acao}.`;
-  }
-
-  if (menciona(`${acao.acao} ${acao.efeitoEsperado}`, ["dar", "compart", "ajud", "oferec"])) {
-    compartilharRecurso(ator, alvo);
-    ator.ajustarRelacao(alvo.nome, 10);
-    alvo.ajustarRelacao(ator.nome, 8);
-    return `${ator.nome} tentou cooperar com ${alvo.nome}: ${acao.acao}.`;
-  }
-
-  ator.ajustarRelacao(alvo.nome, 5);
-  alvo.ajustarRelacao(ator.nome, 3);
-  return `${ator.nome} interagiu com ${alvo.nome}: ${acao.acao}.`;
-}
-
-function compartilharRecurso(origem, destino) {
-  if (origem.inventario.comida > 0 && destino.fome > origem.fome) {
-    origem.inventario.comida -= 1;
-    destino.inventario.comida += 1;
-    destino.ajustarNecessidade("fome", -16);
-  }
-}
-
-function transferirRecurso(origem, destino) {
-  const recurso = ["comida", "madeira", "pedra"].find(item => origem.inventario[item] > 0);
-  if (!recurso) return;
-
-  origem.inventario[recurso] -= 1;
-  destino.inventario[recurso] += 1;
-}
-
-function menciona(texto, termos) {
-  const base = String(texto || "").toLowerCase();
-  return termos.some(termo => base.includes(termo));
+  atualizarPainel(contextoPainel());
 }

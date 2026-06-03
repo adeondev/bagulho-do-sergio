@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "mundo-vivo",
+      "runtimeExecutable": "C:\\Users\\gabriel.marques\\AppData\\Local\\ms-playwright-go\\1.57.0\\node.exe",
+      "runtimeArgs": ["server.js"],
+      "port": 4173
+    }
+  ]
+}

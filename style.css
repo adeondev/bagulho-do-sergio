@@ -503,3 +503,188 @@ input::placeholder {
     border-top: 1px solid var(--line);
   }
 }
+
+/* ---- Controles e tribos (expansao) ---- */
+.botoes-linha {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.botoes-linha .btn-primario {
+  width: auto;
+}
+
+.seg-controls {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.seg-btn {
+  padding: 8px 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.seg-btn.is-on {
+  border-color: rgba(143, 209, 106, 0.7);
+  background: rgba(143, 209, 106, 0.16);
+  color: #d7f6b8;
+}
+
+.campo em {
+  color: #fff3c4;
+  font-style: normal;
+}
+
+input[type="range"] {
+  padding: 0;
+  min-height: 26px;
+  accent-color: var(--green);
+}
+
+.lista-tribos {
+  display: grid;
+  gap: 6px;
+}
+
+.tribo-row {
+  display: grid;
+  grid-template-columns: 14px auto 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+  font-size: 12px;
+}
+
+.tribo-row.em-guerra {
+  border-color: rgba(240, 107, 100, 0.6);
+  background: rgba(240, 107, 100, 0.1);
+}
+
+.tribo-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.3);
+}
+
+.tribo-dot.mini {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+
+.tribo-nome {
+  font-weight: 800;
+  color: #fff8dd;
+}
+
+.tribo-meta {
+  justify-self: end;
+  color: var(--muted);
+}
+
+.resumo-estruturas {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.chip {
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(114, 209, 214, 0.1);
+  color: #bfeff0;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.habitante-row.morto {
+  opacity: 0.5;
+}
+
+/* ---- Painel de detalhe explicito ---- */
+.agora {
+  margin: 4px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(143, 209, 106, 0.3);
+  border-radius: 10px;
+  background: rgba(143, 209, 106, 0.08);
+  font-size: 13px;
+  line-height: 1.5;
+  color: #eef6e2;
+}
+
+.agora b { color: #fff3c4; }
+.agora i { color: #bfeff0; }
+
+.badge-morto {
+  background: rgba(240, 107, 100, 0.18);
+  color: #ffc0bc;
+}
+
+.inv-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+.inv-grid span {
+  padding: 7px 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 13px;
+  font-weight: 800;
+  color: #fff8dd;
+}
+
+.rel-lista {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.rel-tag {
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.rel-tag.pos { border-color: rgba(143, 209, 106, 0.45); }
+.rel-tag.neg { border-color: rgba(240, 107, 100, 0.5); }
+.rel-tag em { font-style: normal; font-weight: 800; color: #fff8dd; }
+.rel-tag small { color: var(--muted); }
+.rel-vazio { color: var(--muted); font-size: 12px; }
+
+.acoes-lista {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: #e8e2c8;
+}
+
+.acoes-lista small { color: var(--muted); }
