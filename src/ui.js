@@ -53,29 +53,68 @@ function configurarControles() {
 
   document.getElementById("btn-seguir")?.addEventListener("click", () => handlers.aoSeguirSelecionado?.());
   document.getElementById("btn-aldeia")?.addEventListener("click", () => handlers.aoIrAldeia?.());
+
+  document.getElementById("btn-toggle-panel")?.addEventListener("click", () => abrirPainel());
+  document.getElementById("btn-fechar-painel")?.addEventListener("click", () => fecharPainel());
+
   document.getElementById("btn-reduzir-painel")?.addEventListener("click", () => {
     document.body.classList.toggle("painel-compacto");
     handlers.aoPainelMudou?.();
   });
 }
 
+export function abrirPainel() {
+  document.body.classList.add("painel-aberto");
+  handlers.aoPainelMudou?.();
+}
+
+export function fecharPainel() {
+  document.body.classList.remove("painel-aberto");
+  handlers.aoPainelMudou?.();
+}
+
+export function alternarPainel() {
+  document.body.classList.toggle("painel-aberto");
+  handlers.aoPainelMudou?.();
+}
+
 export function atualizarPainel(ctx) {
   const { mundo, habitantes, selecionado } = ctx;
-  document.getElementById("dia").textContent = mundo.dia;
-  document.getElementById("populacao").textContent = habitantes.filter(h => h.vivo).length;
-  document.getElementById("era").textContent = ctx.eraNome || "-";
-  document.getElementById("status-simulacao").textContent = ctx.pausado ? "Pausado" : (ctx.guerra ? "Guerra" : "Rodando");
+  const vivos = habitantes.filter(h => h.vivo).length;
+  const estadoTexto = ctx.pausado ? "Pausado" : (ctx.guerra ? "Guerra" : "Rodando");
+
+  setTexto("dia", mundo.dia);
+  setTexto("populacao", vivos);
+  setTexto("era", ctx.eraNome || "-");
+  setTexto("status-simulacao", estadoTexto);
+
+  setTexto("dia-mini", mundo.dia);
+  setTexto("populacao-mini", vivos);
+  setTexto("era-mini", ctx.eraNome || "-");
+  setTexto("status-mini", estadoTexto);
+
   atualizarStatusIa();
 
   renderizarTribos(ctx);
   renderizarEstruturas(ctx);
   renderizarListaHabitantes(ctx);
-  if (selecionado) mostrarHabitante(selecionado, mundo);
+
+  const secaoDetalhe = document.getElementById("secao-detalhe");
+
+  if (selecionado) {
+    secaoDetalhe?.classList.add("tem-selecao");
+    mostrarHabitante(selecionado, mundo);
+  } else {
+    secaoDetalhe?.classList.remove("tem-selecao");
+    const info = document.getElementById("info-habitante");
+    if (info) info.innerHTML = `<div class="empty-state">Clique em um habitante.</div>`;
+  }
 }
 
 function renderizarTribos(ctx) {
   const el = document.getElementById("lista-tribos");
   if (!el) return;
+
   el.innerHTML = (ctx.tribos || []).map(t => `
     <div class="tribo-row ${ctx.guerra ? "em-guerra" : ""}">
       <span class="tribo-dot" style="background:#${t.cor.toString(16).padStart(6, "0")}"></span>
@@ -88,56 +127,90 @@ function renderizarTribos(ctx) {
 function renderizarEstruturas(ctx) {
   const el = document.getElementById("estruturas-resumo");
   if (!el || !ctx.estruturas) return;
+
   const lista = ctx.estruturas.lista || [];
-  if (!lista.length) { el.textContent = "Nenhuma estrutura construida ainda."; return; }
+
+  if (!lista.length) {
+    el.textContent = "Nenhuma estrutura construida ainda.";
+    return;
+  }
+
   const contagem = {};
-  lista.forEach(e => { contagem[e.def.nome] = (contagem[e.def.nome] || 0) + 1; });
-  el.innerHTML = Object.entries(contagem).map(([n, q]) => `<span class="chip">${escaparHtml(n)} ${q}</span>`).join(" ");
+
+  lista.forEach(e => {
+    contagem[e.def.nome] = (contagem[e.def.nome] || 0) + 1;
+  });
+
+  el.innerHTML = Object.entries(contagem)
+    .map(([n, q]) => `<span class="chip">${escaparHtml(n)} ${q}</span>`)
+    .join(" ");
 }
 
 function renderizarListaHabitantes(ctx) {
   const lista = document.getElementById("lista-habitantes");
+  if (!lista) return;
+
   lista.innerHTML = ctx.habitantes.map(h => `
-    <button class="habitante-row ${ctx.selecionado === h ? "is-selected" : ""} ${h.vivo ? "" : "morto"}" data-habitante="${escaparAttr(h.nome)}" title="Clique para voar a camera ate ${escaparAttr(h.nome)}">
+    <button
+      class="habitante-row compacta ${ctx.selecionado === h ? "is-selected" : ""} ${h.vivo ? "" : "morto"}"
+      data-habitante="${escaparAttr(h.nome)}"
+      title="Clique para ver ${escaparAttr(h.nome)}"
+    >
       <span class="row-main">
-        <strong><span class="tribo-dot mini" style="background:#${h.corTribo().toString(16).padStart(6, "0")}"></span>${escaparHtml(h.nome)} ${h.acaoPendente ? (EMOJI_TAREFA[h.acaoPendente.tarefa] || "") : ""}</strong>
+        <strong>
+          <span class="tribo-dot mini" style="background:#${h.corTribo().toString(16).padStart(6, "0")}"></span>
+          ${escaparHtml(h.nome)} ${h.acaoPendente ? (EMOJI_TAREFA[h.acaoPendente.tarefa] || "") : ""}
+        </strong>
         <em>${escaparHtml(h.estadoAtual())}</em>
-      </span>
-      <span class="row-meta">
-        <span>${escaparHtml(h.objetivoAtual)}</span>
-        <span>${escaparHtml(h.descricaoLocal(ctx.mundo))} · M${h.inventario.madeira} P${h.inventario.pedra} C${h.inventario.comida}${h.ferramentas.size ? ` · ${h.ferramentas.size}🛠` : ""}</span>
-      </span>
-      <span class="mini-metricas">
-        ${miniBar("F", h.fome, "necessidade")}
-        ${miniBar("S", h.sede, "necessidade")}
-        ${miniBar("E", h.energia, "vital")}
       </span>
     </button>
   `).join("");
 }
 
 const EMOJI_TAREFA = {
-  beber: "💧", comer: "🍖", coletar: "🪵", construir: "🏠", craftar: "🛠️",
-  cacar: "🏹", atacar: "⚔️", descansar: "😴", socializar: "💬", explorar: "🧭", observar: "👁️"
+  beber: "💧",
+  comer: "🍖",
+  coletar: "🪵",
+  construir: "🏠",
+  craftar: "🛠️",
+  cacar: "🏹",
+  atacar: "⚔️",
+  descansar: "😴",
+  socializar: "💬",
+  explorar: "🧭",
+  observar: "👁️"
 };
 
-const EMOJI_FERRAMENTA = { machado: "🪓", picareta: "⛏️", lanca: "🔱", espada: "🗡️" };
+const EMOJI_FERRAMENTA = {
+  machado: "🪓",
+  picareta: "⛏️",
+  lanca: "🔱",
+  espada: "🗡️"
+};
 
 function descreverAgora(h, mundo) {
   if (!h.vivo) return "💀 <b>Morreu.</b> Faz parte do passado deste mundo.";
 
   const acao = h.acaoPendente;
+
   const emoji = EMOJI_TAREFA[acao?.tarefa] || "•";
+
   const oQueFaz = acao
     ? `${emoji} <b>${escaparHtml(acao.acao)}</b>`
     : `${EMOJI_TAREFA[h.caminho.length ? "explorar" : "observar"]} <b>${escaparHtml(h.objetivoAtual)}</b>`;
 
   let destino = "";
-  if (acao?.alvoHabitante) destino = `mirando <b>${escaparHtml(acao.alvoHabitante)}</b>`;
-  else if (acao?.destinoLocalId) destino = `indo até <b>${escaparHtml(mundo.buscarLocalPorId(acao.destinoLocalId)?.nome || acao.destinoLocalId)}</b>`;
-  else if (acao?.destinoTile) destino = `indo até (${acao.destinoTile.x}, ${acao.destinoTile.y})`;
+
+  if (acao?.alvoHabitante) {
+    destino = `mirando <b>${escaparHtml(acao.alvoHabitante)}</b>`;
+  } else if (acao?.destinoLocalId) {
+    destino = `indo até <b>${escaparHtml(mundo.buscarLocalPorId(acao.destinoLocalId)?.nome || acao.destinoLocalId)}</b>`;
+  } else if (acao?.destinoTile) {
+    destino = `indo até (${acao.destinoTile.x}, ${acao.destinoTile.y})`;
+  }
 
   const rota = h.caminho.length ? `🚶 ${h.caminho.length} tiles restantes` : "📍 parado";
+
   return [
     oQueFaz + (destino ? ` — ${destino}` : ""),
     rota,
@@ -147,31 +220,63 @@ function descreverAgora(h, mundo) {
 
 function listaRelacoes(h) {
   const ent = Object.entries(h.relacoes).filter(([, v]) => Math.abs(v) >= 8);
+
   ent.sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
-  if (!ent.length) return `<span class="rel-vazio">Ainda nao formou lacos fortes.</span>`;
+
+  if (!ent.length) {
+    return `<span class="rel-vazio">Ainda nao formou lacos fortes.</span>`;
+  }
+
   return ent.slice(0, 7).map(([nome, v]) => {
     const tipo = v >= 45 ? "ama" : v >= 8 ? "gosta" : v <= -45 ? "odeia" : "evita";
     const icone = v >= 45 ? "❤️" : v >= 8 ? "🙂" : v <= -45 ? "💢" : "😠";
-    return `<span class="rel-tag ${v >= 0 ? "pos" : "neg"}">${icone} ${escaparHtml(nome)} <em>${v > 0 ? "+" : ""}${Math.round(v)}</em> <small>${tipo}</small></span>`;
+
+    return `
+      <span class="rel-tag ${v >= 0 ? "pos" : "neg"}">
+        ${icone} ${escaparHtml(nome)}
+        <em>${v > 0 ? "+" : ""}${Math.round(v)}</em>
+        <small>${tipo}</small>
+      </span>
+    `;
   }).join("");
 }
 
 export function mostrarHabitante(h, mundo) {
   const detalhe = document.getElementById("info-habitante");
-  if (!h) { detalhe.innerHTML = `<div class="empty-state">Clique em um habitante para voar a camera ate ele.</div>`; return; }
 
-  const ferramentas = [...h.ferramentas].map(f => `${EMOJI_FERRAMENTA[f] || "🛠️"} ${f}`).join("  ") || "nenhuma";
-  const acoes = (h.historicoAcoes || []).slice(-5).reverse()
-    .map(a => `<li>${escaparHtml(a.acao)}${a.motivo ? ` <small>— ${escaparHtml(String(a.motivo).slice(0, 70))}</small>` : ""}</li>`).join("");
+  if (!h) {
+    detalhe.innerHTML = `<div class="empty-state">Clique em um habitante para voar a camera ate ele.</div>`;
+    return;
+  }
+
+  const ferramentas = [...h.ferramentas]
+    .map(f => `${EMOJI_FERRAMENTA[f] || "🛠️"} ${f}`)
+    .join("  ") || "nenhuma";
+
+  const acoes = (h.historicoAcoes || [])
+    .slice(-5)
+    .reverse()
+    .map(a => `
+      <li>
+        ${escaparHtml(a.acao)}
+        ${a.motivo ? ` <small>— ${escaparHtml(String(a.motivo).slice(0, 70))}</small>` : ""}
+      </li>
+    `).join("");
 
   detalhe.innerHTML = `
     <div class="habitante-detalhe">
       <div class="detalhe-topo">
         <div>
-          <h3><span class="tribo-dot mini" style="background:#${h.corTribo().toString(16).padStart(6, "0")}"></span>${escaparHtml(h.nome)}</h3>
+          <h3>
+            <span class="tribo-dot mini" style="background:#${h.corTribo().toString(16).padStart(6, "0")}"></span>
+            ${escaparHtml(h.nome)}
+          </h3>
           <p>${escaparHtml(h.nomeTribo())} · ${h.idade} anos · ${escaparHtml(h.personalidade)}</p>
         </div>
-        <span class="badge ${h.vivo ? "" : "badge-morto"}">${h.vivo ? h.estadoAtual() : "morto"}</span>
+
+        <span class="badge ${h.vivo ? "" : "badge-morto"}">
+          ${h.vivo ? h.estadoAtual() : "morto"}
+        </span>
       </div>
 
       <div class="agora">${descreverAgora(h, mundo)}</div>
@@ -232,6 +337,7 @@ function configurarIaForm() {
   poolsideApiKey.value = config.poolsideApiKey;
   poolsideModel.value = config.poolsideModel;
   puterModel.value = config.puterModel;
+
   atualizarCamposIa(config.provider);
   atualizarStatusIa();
 
@@ -244,6 +350,7 @@ function configurarIaForm() {
 
   [poolsideApiKey, poolsideModel, puterModel].forEach(input => {
     input.addEventListener("input", salvarIaFormComDebounce);
+
     input.addEventListener("change", () => {
       const atualizado = salvarIaConfig(lerIaForm());
       atualizarStatusIa();
@@ -261,7 +368,11 @@ function configurarIaForm() {
 
 function salvarIaFormComDebounce() {
   clearTimeout(iaSaveTimer);
-  iaSaveTimer = setTimeout(() => { salvarIaConfig(lerIaForm()); atualizarStatusIa(); }, 450);
+
+  iaSaveTimer = setTimeout(() => {
+    salvarIaConfig(lerIaForm());
+    atualizarStatusIa();
+  }, 450);
 }
 
 function lerIaForm() {
@@ -282,19 +393,27 @@ function atualizarStatusIa() {
   const config = carregarIaConfig();
   const status = document.getElementById("ia-status");
   if (!status) return;
+
   const pronto = provedorEstaPronto(config);
+
   if (config.provider === IA_PROVIDERS.INSTINTO) {
     status.textContent = "Instinto local: o mundo roda sem chamadas externas.";
     return;
   }
+
   status.textContent = pronto
     ? `${nomeProvedor(config.provider)} pronto. Varias IAs decidem ao mesmo tempo.`
     : `${nomeProvedor(config.provider)} precisa de config. Enquanto isso, instinto assume.`;
 }
 
 export function setEstadoPausa(pausado) {
+  const texto = pausado ? "Retomar" : "Pausar";
   const botao = document.getElementById("btn-pause");
-  botao.textContent = pausado ? "Retomar" : "Pausar";
+  const miniBotao = document.getElementById("btn-mini-pause");
+
+  if (botao) botao.textContent = texto;
+  if (miniBotao) miniBotao.textContent = texto;
+
   document.body.classList.toggle("is-paused", pausado);
 }
 
@@ -305,19 +424,30 @@ export function adicionarEvento(mundo, texto, meta = {}) {
 
   evento.className = `evento ${clicavel ? "is-clickable" : ""}`;
   evento.dataset.evento = clicavel ? "1" : "";
+
   if (meta.habitante) evento.dataset.habitante = meta.habitante;
   if (Number.isInteger(meta.x)) evento.dataset.x = String(meta.x);
   if (Number.isInteger(meta.y)) evento.dataset.y = String(meta.y);
 
   evento.innerHTML = `<span>Dia ${mundo.dia}${clicavel ? " · clique para ver" : ""}</span>${escaparHtml(texto)}`;
+
   div.prepend(evento);
-  while (div.children.length > 46) div.lastElementChild.remove();
+
+  while (div.children.length > 46) {
+    div.lastElementChild.remove();
+  }
 }
 
 // ---- helpers -------------------------------------------------------------
+function setTexto(id, valor) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = valor;
+}
+
 function barra(label, valor, tipo) {
   const v = clamp(Math.round(valor), 0, 100);
   const alerta = tipo === "necessidade" ? v > 72 : v < 34;
+
   return `
     <div class="barra ${alerta ? "is-alert" : ""}">
       <span><b>${label}</b><em>${v}</em></span>
@@ -329,6 +459,7 @@ function barra(label, valor, tipo) {
 function miniBar(label, valor, tipo) {
   const v = clamp(Math.round(valor), 0, 100);
   const alerta = tipo === "necessidade" ? v > 72 : v < 34;
+
   return `
     <span class="mini-bar ${alerta ? "is-alert" : ""}" title="${label}: ${v}">
       <b>${label}</b><i><u style="width:${v}%"></u></i>
@@ -338,8 +469,11 @@ function miniBar(label, valor, tipo) {
 
 function escaparHtml(valor) {
   return String(valor)
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function escaparAttr(valor) {

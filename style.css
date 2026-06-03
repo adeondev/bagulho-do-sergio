@@ -739,3 +739,178 @@ body.painel-compacto #btn-pause {
   padding: 8px 0;
   writing-mode: vertical-rl;
 }
+
+/* =========================================================
+   MODO OBSERVAÇÃO — HUD pequeno + painel escondido
+   ========================================================= */
+
+body {
+  display: block;
+}
+
+#game-container {
+  width: 100vw;
+  height: 100vh;
+  flex: none;
+}
+
+/* HUD compacto sempre visível */
+#hud-mini {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  z-index: 30;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  max-width: calc(100vw - 32px);
+  padding: 8px;
+  border: 1px solid rgba(244, 239, 218, 0.15);
+  border-radius: 14px;
+  background: rgba(18, 24, 20, 0.78);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.28);
+}
+
+.hud-card {
+  min-width: 76px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.hud-card span {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.hud-card strong {
+  display: block;
+  margin-top: 2px;
+  color: #fff8dd;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.hud-btn {
+  min-width: 72px;
+  padding: 0 12px;
+  border: 1px solid rgba(244, 239, 218, 0.16);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.hud-btn:hover {
+  filter: brightness(1.12);
+}
+
+.hud-btn.destaque {
+  background: linear-gradient(135deg, var(--green), #e8d765);
+  color: #172015;
+}
+
+/* Painel lateral vira gaveta escondida */
+#painel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 40;
+  width: min(var(--panel-w), calc(100vw - 22px));
+  height: 100vh;
+  transform: translateX(108%);
+  transition: transform 0.28s ease;
+  box-shadow: -18px 0 50px rgba(0, 0, 0, 0.32);
+}
+
+body.painel-aberto #painel {
+  transform: translateX(0);
+}
+
+body.painel-aberto #hud-mini {
+  opacity: 0.18;
+  pointer-events: none;
+}
+
+/* Ações do topo do painel */
+.painel-acoes {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.btn-fechar {
+  min-width: 38px;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  font-size: 22px;
+  line-height: 1;
+}
+
+/* Detalhe de habitante só aparece quando existir seleção */
+.detalhe-secao {
+  display: none;
+}
+
+.detalhe-secao.tem-selecao {
+  display: block;
+}
+
+/* Lista de habitantes mais compacta */
+.habitante-row.compacta {
+  min-height: auto;
+  padding: 9px 10px;
+  gap: 4px;
+}
+
+.habitante-row.compacta .row-main strong {
+  font-size: 14px;
+}
+
+.habitante-row.compacta .row-main em {
+  max-width: 135px;
+  font-size: 10px;
+}
+
+.habitante-row.compacta .row-meta,
+.habitante-row.compacta .mini-metricas {
+  display: none;
+}
+
+/* Painel fica menos poluído */
+.painel-secao {
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+#eventos .evento {
+  cursor: pointer;
+}
+
+#eventos .evento:hover {
+  border-color: rgba(240, 185, 101, 0.55);
+  background: rgba(240, 185, 101, 0.08);
+}
+
+/* Mobile */
+@media (max-width: 760px) {
+  #hud-mini {
+    flex-wrap: wrap;
+    right: 14px;
+  }
+
+  .hud-card {
+    min-width: 68px;
+  }
+
+  .hud-btn {
+    flex: 1;
+    min-height: 36px;
+  }
+}

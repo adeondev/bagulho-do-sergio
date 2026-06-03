@@ -9,13 +9,37 @@
 <body>
   <main id="game-container"></main>
 
+<section id="hud-mini" aria-label="Resumo do mundo">
+  <div class="hud-card">
+    <span>Dia</span>
+    <strong id="dia-mini">1</strong>
+  </div>
+
+  <div class="hud-card">
+    <span>População</span>
+    <strong id="populacao-mini">0</strong>
+  </div>
+
+  <div class="hud-card">
+    <span>Era</span>
+    <strong id="era-mini">-</strong>
+  </div>
+
+  <button id="btn-mini-dia" class="hud-btn">+1 dia</button>
+  <button id="btn-mini-pause" class="hud-btn">Pausar</button>
+  <button id="btn-toggle-panel" class="hud-btn destaque">Menu</button>
+</section>
+
   <aside id="painel" aria-label="Painel da simulacao">
     <header class="painel-topo">
       <div>
         <p>Simulacao autonoma de IAs</p>
         <h1>Mundo Vivo</h1>
       </div>
-      <button id="btn-pause" class="btn-secundario" title="Pausar ou retomar com Esc">Pausar</button>
+      <div class="painel-acoes">
+  <button id="btn-pause" class="btn-secundario" title="Pausar ou retomar com Esc">Pausar</button>
+  <button id="btn-fechar-painel" class="btn-secundario btn-fechar" title="Fechar painel">×</button>
+</div>
     </header>
 
     <section class="stats-grid" aria-label="Resumo">
@@ -94,12 +118,12 @@
       <div id="lista-habitantes" class="lista-habitantes"></div>
     </section>
 
-    <section class="painel-secao">
-      <h2>Detalhe</h2>
-      <div id="info-habitante">
-        <div class="empty-state">Clique em um habitante.</div>
-      </div>
-    </section>
+<section id="secao-detalhe" class="painel-secao detalhe-secao">
+  <h2>Detalhe</h2>
+  <div id="info-habitante">
+    <div class="empty-state">Clique em um habitante.</div>
+  </div>
+</section>
 
     <section class="painel-secao">
       <h2>Eventos</h2>
