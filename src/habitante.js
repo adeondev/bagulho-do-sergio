@@ -31,6 +31,13 @@ export class Habitante {
     this.objetivoAtual = "observar o ambiente";
 
     this.memorias = [];
+    this.historicoAcoes = [];
+    this.relacoes = {};
+    this.inventario = {
+      comida: 0,
+      madeira: 0,
+      pedra: 0
+    };
     this.conhecimentos = [
       "agua reduz sede",
       "descansar recupera energia",
@@ -47,8 +54,9 @@ export class Habitante {
     this.deveObservarDestino = false;
     this.chegadaPendente = false;
     this.caminho = [];
+    this.acaoPendente = null;
 
-    this.velocidade = aleatorio(62, 84);
+    this.velocidade = aleatorio(18, 28);
     this.tempoOcioso = 0;
     this.proximoPasseioEm = aleatorio(1600, 3800);
     this.cooldownConversa = aleatorio(1000, 4200);
@@ -110,14 +118,14 @@ export class Habitante {
     return this.scene.mundo?.posicaoHabitante(x, y) ?? { x: 0, y: 0 };
   }
 
-  mover(mundo, aoChegar, delta) {
+  mover(mundo, aoChegar, delta, permitirExploracaoLivre = true) {
     if (!this.vivo) return;
 
     this.atualizarRelogios(delta);
 
     if (this.chegadaPendente) {
       this.chegadaPendente = false;
-      if (this.deveObservarDestino) {
+      if (this.deveObservarDestino || this.acaoPendente) {
         this.deveObservarDestino = false;
         aoChegar(this);
       }
@@ -127,7 +135,7 @@ export class Habitante {
     if (!this.caminho.length) {
       this.tempoOcioso += delta;
 
-      if (this.tempoOcioso > this.proximoPasseioEm) {
+      if (permitirExploracaoLivre && this.tempoOcioso > this.proximoPasseioEm) {
         this.iniciarExploracaoLivre(mundo);
       }
 
@@ -176,7 +184,7 @@ export class Habitante {
     this.destinoTile = null;
     this.proximoPasseioEm = aleatorio(1400, 4200);
 
-    if (this.deveObservarDestino) {
+    if (this.deveObservarDestino || this.acaoPendente) {
       this.deveObservarDestino = false;
       aoChegar(this);
       return;
@@ -303,6 +311,11 @@ export class Habitante {
     this.pensamento = resultado;
     this.objetivoAtual = `observar ${local.nome}`;
     this.lembrar(resultado);
+    this.registrarAcao({
+      categoria: "exploracao",
+      acao: `observei ${local.nome}`,
+      motivo: resultado
+    });
 
     return resultado;
   }
@@ -335,7 +348,44 @@ export class Habitante {
     this.parConversa = outro.nome;
     this.pensamento = `Conversei com ${outro.nome}: ${fala}`;
     this.lembrar(`Conversei com ${outro.nome}: ${fala}`);
+    this.ajustarRelacao(outro.nome, 4);
     this.falar(fala);
+  }
+
+  registrarAcao(acao) {
+    this.historicoAcoes.push({
+      categoria: acao.categoria || "acao",
+      acao: acao.acao || "agir",
+      motivo: acao.motivo || "",
+      dia: acao.dia || null
+    });
+
+    if (this.historicoAcoes.length > 16) {
+      this.historicoAcoes.shift();
+    }
+  }
+
+  relacaoCom(nome) {
+    return this.relacoes[nome] ?? 0;
+  }
+
+  ajustarRelacao(nome, delta) {
+    this.relacoes[nome] = clamp(this.relacaoCom(nome) + delta, -100, 100);
+  }
+
+  receberDano(valor, motivo = "conflito") {
+    this.saude = clamp(this.saude - Math.max(0, valor), 0, 100);
+    this.pensamento = `Sofri consequencias de ${motivo}.`;
+    this.lembrar(this.pensamento);
+
+    if (this.saude <= 0) {
+      this.morrer();
+    }
+  }
+
+  ajustarNecessidade(chave, delta) {
+    if (!["fome", "sede", "energia", "saude"].includes(chave)) return;
+    this[chave] = clamp(this[chave] + delta, 0, chave === "saude" || chave === "energia" ? 100 : 120);
   }
 
   falar(texto, duracao = 3400) {
@@ -408,6 +458,7 @@ export class Habitante {
   estadoAtual() {
     if (!this.vivo) return "Morto";
     if (this.tempoConversa > 0 && this.parConversa) return `Conversando com ${this.parConversa}`;
+    if (this.acaoPendente?.acao) return this.acaoPendente.acao;
     if (this.caminho.length) return "Caminhando";
     if (this.sede > 82) return "Precisa de agua";
     if (this.fome > 82) return "Procurando comida";

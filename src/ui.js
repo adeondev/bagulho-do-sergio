@@ -1,11 +1,15 @@
 import { clamp } from "./utils.js";
+import { carregarIaConfig, IA_PROVIDERS, nomeProvedor, provedorEstaPronto, salvarIaConfig } from "./provedoresIa.js";
 
 let handlers = {
-  aoSelecionarHabitante: null
+  aoSelecionarHabitante: null,
+  aoConfigIaMudou: null
 };
+let iaSaveTimer = null;
 
-export function configurarPainel({ aoSelecionarHabitante }) {
+export function configurarPainel({ aoSelecionarHabitante, aoConfigIaMudou }) {
   handlers.aoSelecionarHabitante = aoSelecionarHabitante;
+  handlers.aoConfigIaMudou = aoConfigIaMudou;
 
   const lista = document.getElementById("lista-habitantes");
   lista.addEventListener("click", evento => {
@@ -13,18 +17,100 @@ export function configurarPainel({ aoSelecionarHabitante }) {
     if (!botao || !handlers.aoSelecionarHabitante) return;
     handlers.aoSelecionarHabitante(botao.dataset.habitante);
   });
+
+  configurarIaForm();
 }
 
 export function atualizarPainel(mundo, habitantes, estado = {}) {
   document.getElementById("dia").textContent = mundo.dia;
   document.getElementById("populacao").textContent = habitantes.filter(h => h.vivo).length;
   document.getElementById("status-simulacao").textContent = estado.pausado ? "Pausado" : "Rodando";
+  atualizarStatusIa();
 
   renderizarListaHabitantes(mundo, habitantes, estado.selecionado);
 
   if (estado.selecionado) {
     mostrarHabitante(estado.selecionado, mundo);
   }
+}
+
+function configurarIaForm() {
+  const config = carregarIaConfig();
+  const provider = document.getElementById("ia-provider");
+  const poolsideApiKey = document.getElementById("poolside-api-key");
+  const poolsideModel = document.getElementById("poolside-model");
+  const puterModel = document.getElementById("puter-model");
+  const save = document.getElementById("btn-save-ia");
+
+  provider.value = config.provider;
+  poolsideApiKey.value = config.poolsideApiKey;
+  poolsideModel.value = config.poolsideModel;
+  puterModel.value = config.puterModel;
+  atualizarCamposIa(config.provider);
+  atualizarStatusIa();
+
+  provider.addEventListener("change", () => {
+    const atualizado = salvarIaConfig({
+      ...lerIaForm(),
+      provider: provider.value
+    });
+    atualizarCamposIa(atualizado.provider);
+    atualizarStatusIa();
+    handlers.aoConfigIaMudou?.(atualizado);
+  });
+
+  [poolsideApiKey, poolsideModel, puterModel].forEach(input => {
+    input.addEventListener("input", salvarIaFormComDebounce);
+    input.addEventListener("change", () => {
+      const atualizado = salvarIaConfig(lerIaForm());
+      atualizarStatusIa();
+      handlers.aoConfigIaMudou?.(atualizado);
+    });
+  });
+
+  save.addEventListener("click", () => {
+    const atualizado = salvarIaConfig(lerIaForm());
+    atualizarCamposIa(atualizado.provider);
+    atualizarStatusIa();
+    handlers.aoConfigIaMudou?.(atualizado);
+  });
+}
+
+function salvarIaFormComDebounce() {
+  clearTimeout(iaSaveTimer);
+  iaSaveTimer = setTimeout(() => {
+    salvarIaConfig(lerIaForm());
+    atualizarStatusIa();
+  }, 450);
+}
+
+function lerIaForm() {
+  return {
+    provider: document.getElementById("ia-provider").value,
+    poolsideApiKey: document.getElementById("poolside-api-key").value,
+    poolsideModel: document.getElementById("poolside-model").value,
+    puterModel: document.getElementById("puter-model").value
+  };
+}
+
+function atualizarCamposIa(provider) {
+  document.getElementById("poolside-fields").classList.toggle("is-hidden", provider !== IA_PROVIDERS.POOLSIDE);
+  document.getElementById("puter-fields").classList.toggle("is-hidden", provider !== IA_PROVIDERS.PUTER);
+}
+
+function atualizarStatusIa() {
+  const config = carregarIaConfig();
+  const status = document.getElementById("ia-status");
+  const pronto = provedorEstaPronto(config);
+
+  if (config.provider === IA_PROVIDERS.INSTINTO) {
+    status.textContent = "Instinto local: sem chamada externa.";
+    return;
+  }
+
+  status.textContent = pronto
+    ? `${nomeProvedor(config.provider)} pronto. Use npm start para proxy local se o navegador bloquear CORS.`
+    : `${nomeProvedor(config.provider)} precisa de configuracao. NPCs aguardam sem instinto.`;
 }
 
 export function setEstadoPausa(pausado) {

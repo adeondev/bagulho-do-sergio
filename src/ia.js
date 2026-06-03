@@ -1,29 +1,128 @@
 import { escolher } from "./utils.js";
+import { completarComProvedor, carregarIaConfig, IA_PROVIDERS, nomeProvedor, provedorEstaPronto } from "./provedoresIa.js";
 
-export async function decidirDestinoComIA(habitante, mundo) {
-  const puterClient = globalThis.puter;
+const CATEGORIAS = ["sobrevivencia", "exploracao", "social", "descanso", "coleta", "hostil", "criativa"];
 
-  if (!puterClient?.ai?.chat) {
+export async function decidirAcaoComIA(habitante, mundo, habitantes) {
+  const config = carregarIaConfig();
+
+  if (config.provider === IA_PROVIDERS.INSTINTO) {
     return decidirPorInstinto(habitante, mundo);
   }
 
-  puterClient.quiet = true;
+  if (!provedorEstaPronto(config)) {
+    habitante.pensamento = `${nomeProvedor(config.provider)} nao esta configurado. Vou aguardar.`;
+    habitante.objetivoAtual = "aguardando IA";
+    return null;
+  }
 
-  const locais = mundo.locaisVisiveisPara(habitante);
+  const prompt = montarPromptAcao(habitante, mundo, habitantes);
+
+  try {
+    const decisao = normalizarAcao(parseJsonSeguro(await completarComProvedor(prompt)), mundo, habitantes);
+    decisao.provedor = nomeProvedor(config.provider);
+    return decisao;
+  } catch (erro) {
+    console.warn(`${nomeProvedor(config.provider)} falhou; ${habitante.nome} vai aguardar:`, erro);
+    habitante.pensamento = `${nomeProvedor(config.provider)} nao respondeu. Vou aguardar.`;
+    habitante.objetivoAtual = "aguardando IA";
+    habitante.lembrar(habitante.pensamento);
+    return null;
+  }
+}
+
+export async function decidirInteracaoComIA(habitante, outro, mundo) {
+  const config = carregarIaConfig();
+
+  if (config.provider === IA_PROVIDERS.INSTINTO) {
+    return decidirInteracaoPorInstinto(habitante, outro, mundo);
+  }
+
+  if (!provedorEstaPronto(config)) {
+    return null;
+  }
 
   const prompt = `
-Voce e ${habitante.nome}, um ser primitivo vivendo em um mundo novo.
+Voce controla ${habitante.nome} em uma simulacao social autonoma.
+${outro.nome} esta muito perto. Decida espontaneamente o que ${habitante.nome} faz ou fala.
 
-Voce NAO deve escolher acoes prontas como "comer", "dormir" ou "coletar".
-Voce escolhe uma regiao do mapa para visitar, e depois caminhara livremente pelo terreno.
+Estado de ${habitante.nome}:
+- Fome: ${habitante.fome}
+- Sede: ${habitante.sede}
+- Energia: ${habitante.energia}
+- Saude: ${habitante.saude}
+- Personalidade: ${habitante.personalidade}
+- Objetivo atual: ${habitante.objetivoAtual}
+- Pensamento: ${habitante.pensamento}
+- Memorias recentes: ${habitante.memorias.slice(-5).join(" | ") || "nenhuma"}
+- Relacao com ${outro.nome}: ${habitante.relacaoCom(outro.nome)}
 
-Voce tem curiosidade propria, memorias, necessidades e uma pequena nocao dos lugares ja descobertos.
-Voce pode visitar lugares conhecidos por necessidade ou explorar lugares desconhecidos por curiosidade.
+Estado de ${outro.nome}:
+- Fome: ${outro.fome}
+- Sede: ${outro.sede}
+- Energia: ${outro.energia}
+- Saude: ${outro.saude}
+- Personalidade: ${outro.personalidade}
+- Objetivo atual: ${outro.objetivoAtual}
+- Pensamento: ${outro.pensamento}
 
-Conhecimento basico:
-${habitante.conhecimentos.map(c => `- ${c}`).join("\n")}
+Terreno atual: ${mundo.descreverTile(habitante.xTile, habitante.yTile)}
 
-Seu estado:
+Nao use falas prontas. Voce pode cooperar, mentir, negociar, pedir ajuda, ignorar, provocar, ameacar, roubar recurso ficticio, atacar de forma abstrata ou inventar outra atitude da simulacao.
+Conflitos devem ser descritos de forma curta e nao grafica. Nao forneca instrucoes reais de crime ou violencia.
+
+Responda SOMENTE com JSON valido:
+{
+  "categoria": "social|hostil|criativa|sobrevivencia|coleta",
+  "acao": "acao livre e curta",
+  "fala": "fala curta em primeira pessoa ou string vazia",
+  "motivo": "motivo curto",
+  "efeitoEsperado": "o que ${habitante.nome} espera que aconteca",
+  "intensidade": 0
+}
+`;
+
+  try {
+    const decisao = parseJsonSeguro(await completarComProvedor(prompt));
+    return normalizarInteracao(decisao);
+  } catch (erro) {
+    console.warn(`${nomeProvedor(config.provider)} falhou na interacao; ${habitante.nome} ficou em silencio:`, erro);
+    return null;
+  }
+}
+
+export function modoIaAutonomoAtivo() {
+  const config = carregarIaConfig();
+  return config.provider !== IA_PROVIDERS.INSTINTO;
+}
+
+function montarPromptAcao(habitante, mundo, habitantes) {
+  const locais = mundo.locaisVisiveisPara(habitante);
+  const outros = habitantes
+    .filter(outro => outro !== habitante && outro.vivo)
+    .map(outro => ({
+      nome: outro.nome,
+      distanciaTiles: Math.round(Math.hypot(outro.xTile - habitante.xTile, outro.yTile - habitante.yTile) * 10) / 10,
+      estado: outro.estadoAtual(),
+      relacao: habitante.relacaoCom(outro.nome),
+      pensamento: outro.pensamento
+    }));
+
+  return `
+Voce controla ${habitante.nome}, um habitante autonomo em um mundo vivo.
+
+Objetivo do experimento:
+- Voce decide TUDO que ${habitante.nome} tenta fazer.
+- Nao escolha apenas um destino. Escolha uma acao completa, com intencao, fala, alvo opcional e lugar opcional.
+- Nao use lista pronta de acoes. "acao" deve ser livre e especifica.
+- A simulacao vai limitar o resultado pelo mundo fisico: terreno, proximidade, fome, sede, energia e outros habitantes.
+- Voce pode cooperar, explorar, descansar, procurar recursos, socializar, enganar, roubar recurso ficticio ou entrar em conflito abstrato.
+- Conflitos devem ser nao graficos e sem instrucoes reais de violencia/crime.
+
+Estado interno:
+- Nome: ${habitante.nome}
+- Idade: ${habitante.idade}
+- Personalidade: ${habitante.personalidade}
 - Fome: ${habitante.fome}
 - Sede: ${habitante.sede}
 - Energia: ${habitante.energia}
@@ -31,51 +130,136 @@ Seu estado:
 - Curiosidade: ${habitante.curiosidade}
 - Coragem: ${habitante.coragem}
 - Sociabilidade: ${habitante.sociabilidade}
-- Personalidade: ${habitante.personalidade}
+- Posicao: (${habitante.xTile}, ${habitante.yTile}) em ${mundo.descreverTile(habitante.xTile, habitante.yTile)}
+- Inventario: ${JSON.stringify(habitante.inventario)}
+- Objetivo atual: ${habitante.objetivoAtual}
+- Pensamento atual: ${habitante.pensamento}
+- Conhecimentos: ${habitante.conhecimentos.join(" | ")}
+- Memorias recentes: ${habitante.memorias.slice(-8).join(" | ") || "nenhuma"}
 
-Memorias recentes:
-${habitante.memorias.length ? habitante.memorias.slice(-6).map(m => `- ${m}`).join("\n") : "- nenhuma"}
-
-Lugares do mundo:
+Lugares percebidos:
 ${locais.map(l => `- id: ${l.id}, nome: ${l.nome}, posicao: (${l.x}, ${l.y}), tipo: ${l.tipo}, descricao: ${l.descricao}`).join("\n")}
 
-Regras:
-- Se estiver com muita sede, provavelmente busque agua se conhecer algum lugar.
-- Se estiver com fome, procure lugares que talvez tenham comida.
-- Se estiver curioso, explore uma regiao desconhecida.
-- Se estiver cansado, volte para uma moradia.
-- Voce pode escolher qualquer local listado.
+Outros habitantes:
+${outros.length ? outros.map(o => `- ${o.nome}: distancia ${o.distanciaTiles}, estado ${o.estado}, relacao ${o.relacao}, pensamento "${o.pensamento}"`).join("\n") : "- nenhum"}
+
+Campos obrigatorios:
+- categoria deve ser uma destas categorias de motor: ${CATEGORIAS.join(", ")}.
+- destinoLocalId pode ser null ou um id de lugar listado.
+- destinoX e destinoY podem ser null ou coordenadas inteiras do mapa. Use quando quiser andar para um ponto livre especifico.
+- alvoHabitante pode ser null ou o nome de outro habitante listado.
+- intensidade vai de 0 a 100 e indica risco/forca/urgencia.
+- fala pode ser "" se a acao nao envolve fala.
 
 Responda SOMENTE com JSON valido:
-
 {
-  "destinoId": "id_do_local",
+  "categoria": "uma categoria de motor",
+  "acao": "acao livre e especifica que ${habitante.nome} tentara executar",
+  "destinoLocalId": null,
+  "destinoX": null,
+  "destinoY": null,
+  "alvoHabitante": null,
+  "fala": "fala curta em primeira pessoa ou string vazia",
   "motivo": "motivo curto em primeira pessoa",
-  "curiosidade": "o que quero observar nesse lugar"
+  "efeitoEsperado": "resultado que ${habitante.nome} espera",
+  "intensidade": 0
 }
 `;
+}
+
+function limparRespostaJson(texto) {
+  const limpo = String(texto)
+    .replace("```json", "")
+    .replace("```", "")
+    .trim();
+
+  const inicio = limpo.indexOf("{");
+  const fim = limpo.lastIndexOf("}");
+
+  if (inicio >= 0 && fim > inicio) {
+    return limpo.slice(inicio, fim + 1);
+  }
+
+  return limpo;
+}
+
+function parseJsonSeguro(texto) {
+  const limpo = limparRespostaJson(texto);
 
   try {
-    const resposta = await puterClient.ai.chat(prompt, {
-      model: "gpt-5-nano"
-    });
+    return JSON.parse(limpo);
+  } catch {
+    return JSON.parse(sanitizarJsonComQuebras(limpo));
+  }
+}
 
-    const texto = resposta.message.content
-      .replace("```json", "")
-      .replace("```", "")
-      .trim();
+function sanitizarJsonComQuebras(texto) {
+  let saida = "";
+  let dentroString = false;
+  let escapado = false;
 
-    const decisao = JSON.parse(texto);
-
-    if (!mundo.buscarLocalPorId(decisao.destinoId)) {
-      return decidirPorInstinto(habitante, mundo);
+  for (const char of texto) {
+    if (escapado) {
+      saida += char;
+      escapado = false;
+      continue;
     }
 
-    return decisao;
-  } catch (erro) {
-    console.warn("IA falhou, usando instinto:", erro);
-    return decidirPorInstinto(habitante, mundo);
+    if (char === "\\") {
+      saida += char;
+      escapado = true;
+      continue;
+    }
+
+    if (char === "\"") {
+      dentroString = !dentroString;
+      saida += char;
+      continue;
+    }
+
+    if (dentroString && (char === "\n" || char === "\r")) {
+      saida += " ";
+      continue;
+    }
+
+    saida += char;
   }
+
+  return saida;
+}
+
+function normalizarAcao(decisao, mundo, habitantes) {
+  const categoria = CATEGORIAS.includes(decisao.categoria) ? decisao.categoria : "exploracao";
+  const destinoExiste = decisao.destinoLocalId && mundo.buscarLocalPorId(decisao.destinoLocalId);
+  const destinoX = Number.isInteger(decisao.destinoX) ? decisao.destinoX : null;
+  const destinoY = Number.isInteger(decisao.destinoY) ? decisao.destinoY : null;
+  const destinoTile = destinoX !== null && destinoY !== null && mundo.isWalkable(destinoX, destinoY)
+    ? { x: destinoX, y: destinoY }
+    : null;
+  const alvoExiste = decisao.alvoHabitante && habitantes.some(h => h.nome === decisao.alvoHabitante && h.vivo);
+
+  return {
+    categoria,
+    acao: textoCurto(decisao.acao, "agir por conta propria"),
+    destinoLocalId: destinoExiste ? decisao.destinoLocalId : null,
+    destinoTile,
+    alvoHabitante: alvoExiste ? decisao.alvoHabitante : null,
+    fala: textoCurto(decisao.fala, ""),
+    motivo: textoCurto(decisao.motivo, "Quero decidir por mim mesmo."),
+    efeitoEsperado: textoCurto(decisao.efeitoEsperado, "entender o que acontece"),
+    intensidade: clampNumero(decisao.intensidade, 0, 100)
+  };
+}
+
+function normalizarInteracao(decisao) {
+  return {
+    categoria: CATEGORIAS.includes(decisao.categoria) ? decisao.categoria : "social",
+    acao: textoCurto(decisao.acao, "interagir"),
+    fala: textoCurto(decisao.fala, ""),
+    motivo: textoCurto(decisao.motivo, "reagir ao outro"),
+    efeitoEsperado: textoCurto(decisao.efeitoEsperado, "mudar a relacao"),
+    intensidade: clampNumero(decisao.intensidade, 0, 100)
+  };
 }
 
 export function decidirPorInstinto(habitante, mundo) {
@@ -85,9 +269,15 @@ export function decidirPorInstinto(habitante, mundo) {
     const agua = conhecidos.find(l => l.tipo === "agua") || mundo.locais.find(l => l.tipo === "agua");
 
     return {
-      destinoId: agua.id,
+      categoria: "sobrevivencia",
+      acao: "procurar agua",
+      destinoLocalId: agua.id,
+      alvoHabitante: null,
+      fala: "",
       motivo: "Estou com sede e preciso encontrar agua.",
-      curiosidade: "qualidade da agua"
+      efeitoEsperado: "beber e reduzir minha sede",
+      intensidade: 80,
+      provedor: nomeProvedor(IA_PROVIDERS.INSTINTO)
     };
   }
 
@@ -95,9 +285,15 @@ export function decidirPorInstinto(habitante, mundo) {
     const floresta = conhecidos.find(l => l.tipo === "floresta") || mundo.locais.find(l => l.tipo === "floresta");
 
     return {
-      destinoId: floresta.id,
+      categoria: "sobrevivencia",
+      acao: "procurar comida",
+      destinoLocalId: floresta.id,
+      alvoHabitante: null,
+      fala: "",
       motivo: "Estou com fome e quero procurar algo para comer.",
-      curiosidade: "frutos ou animais"
+      efeitoEsperado: "encontrar alimento",
+      intensidade: 75,
+      provedor: nomeProvedor(IA_PROVIDERS.INSTINTO)
     };
   }
 
@@ -105,29 +301,47 @@ export function decidirPorInstinto(habitante, mundo) {
     const aldeia = mundo.locais.find(l => l.tipo === "moradia");
 
     return {
-      destinoId: aldeia.id,
+      categoria: "descanso",
+      acao: "voltar para descansar",
+      destinoLocalId: aldeia.id,
+      alvoHabitante: null,
+      fala: "",
       motivo: "Estou cansado e quero voltar para um lugar seguro.",
-      curiosidade: "descanso"
+      efeitoEsperado: "recuperar energia",
+      intensidade: 70,
+      provedor: nomeProvedor(IA_PROVIDERS.INSTINTO)
     };
   }
 
   const desconhecidos = mundo.locais.filter(l => !habitante.mapaConhecido.includes(l.id));
-
-  if (desconhecidos.length && habitante.curiosidade > 50) {
-    const local = escolher(desconhecidos);
-
-    return {
-      destinoId: local.id,
-      motivo: "Sinto curiosidade por uma regiao que ainda nao conheco.",
-      curiosidade: "descobrir o que existe ali"
-    };
-  }
-
-  const local = escolher(mundo.locais);
+  const local = desconhecidos.length && habitante.curiosidade > 50
+    ? escolher(desconhecidos)
+    : escolher(mundo.locais);
 
   return {
-    destinoId: local.id,
+    categoria: "exploracao",
+    acao: "explorar uma regiao",
+    destinoLocalId: local.id,
+    alvoHabitante: null,
+    fala: "",
     motivo: "Quero continuar observando o mundo.",
-    curiosidade: "entender melhor o ambiente"
+    efeitoEsperado: "entender melhor o ambiente",
+    intensidade: 45,
+    provedor: nomeProvedor(IA_PROVIDERS.INSTINTO)
   };
+}
+
+function decidirInteracaoPorInstinto(habitante, outro, mundo) {
+  return null;
+}
+
+function textoCurto(valor, fallback) {
+  const texto = String(valor || "").trim();
+  return (texto || fallback).slice(0, 180);
+}
+
+function clampNumero(valor, min, max) {
+  const numero = Number(valor);
+  if (!Number.isFinite(numero)) return min;
+  return Math.max(min, Math.min(max, Math.round(numero)));
 }

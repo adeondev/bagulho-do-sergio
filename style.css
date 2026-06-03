@@ -118,6 +118,31 @@ button {
   font: inherit;
 }
 
+select,
+input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(9, 13, 11, 0.55);
+  color: var(--text);
+  font: inherit;
+}
+
+select {
+  min-height: 38px;
+  padding: 8px 10px;
+}
+
+input {
+  min-height: 38px;
+  padding: 8px 10px;
+}
+
+input::placeholder {
+  color: rgba(246, 242, 223, 0.36);
+}
+
 .btn-primario,
 .btn-secundario {
   border: 0;
@@ -193,6 +218,44 @@ button {
 
 .painel-secao h2 {
   margin-bottom: 10px;
+}
+
+.ia-config {
+  display: grid;
+  gap: 10px;
+}
+
+.ia-config h2 {
+  margin-bottom: 0;
+}
+
+.campo {
+  display: grid;
+  gap: 5px;
+}
+
+.campo span,
+.ia-status {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.provider-fields {
+  display: grid;
+  gap: 8px;
+}
+
+.provider-fields.is-hidden {
+  display: none;
+}
+
+.ia-status {
+  min-height: 16px;
+  text-transform: none;
+  line-height: 1.35;
 }
 
 .lista-habitantes {

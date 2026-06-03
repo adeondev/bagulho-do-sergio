@@ -35,6 +35,36 @@
 
     <button id="btn-dia" class="btn-primario">Passar 1 dia</button>
 
+    <section class="painel-secao ia-config">
+      <h2>IA</h2>
+      <label class="campo">
+        <span>Provedor</span>
+        <select id="ia-provider">
+          <option value="poolside">Poolside Laguna</option>
+          <option value="puter">Puter GPT</option>
+          <option value="instinto">Instinto local</option>
+        </select>
+      </label>
+      <div id="poolside-fields" class="provider-fields">
+        <label class="campo">
+          <span>Poolside API key</span>
+          <input id="poolside-api-key" type="password" autocomplete="off" placeholder="pk_...">
+        </label>
+        <label class="campo">
+          <span>Modelo Poolside</span>
+          <input id="poolside-model" type="text" autocomplete="off" value="poolside/laguna-xs.2">
+        </label>
+      </div>
+      <div id="puter-fields" class="provider-fields">
+        <label class="campo">
+          <span>Modelo Puter</span>
+          <input id="puter-model" type="text" autocomplete="off" value="gpt-5-nano">
+        </label>
+      </div>
+      <button id="btn-save-ia" class="btn-secundario">Salvar IA</button>
+      <p id="ia-status" class="ia-status">Instinto local ativo se a IA falhar.</p>
+    </section>
+
     <section class="painel-secao">
       <h2>Habitantes</h2>
       <div id="lista-habitantes" class="lista-habitantes"></div>
