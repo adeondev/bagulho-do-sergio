@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mundo Vivo</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="game-container"></main>
+
+  <aside id="painel" aria-label="Painel da simulacao">
+    <header class="painel-topo">
+      <div>
+        <p>Simulacao social</p>
+        <h1>Mundo Vivo</h1>
+      </div>
+      <button id="btn-pause" class="btn-secundario" title="Pausar ou retomar com Esc">Pausar</button>
+    </header>
+
+    <section class="stats-grid" aria-label="Resumo">
+      <div>
+        <span>Dia</span>
+        <strong id="dia">1</strong>
+      </div>
+      <div>
+        <span>Populacao</span>
+        <strong id="populacao">0</strong>
+      </div>
+      <div>
+        <span>Estado</span>
+        <strong id="status-simulacao">Rodando</strong>
+      </div>
+    </section>
+
+    <button id="btn-dia" class="btn-primario">Passar 1 dia</button>
+
+    <section class="painel-secao">
+      <h2>Habitantes</h2>
+      <div id="lista-habitantes" class="lista-habitantes"></div>
+    </section>
+
+    <section class="painel-secao">
+      <h2>Detalhe</h2>
+      <div id="info-habitante">
+        <div class="empty-state">Clique em um habitante.</div>
+      </div>
+    </section>
+
+    <section class="painel-secao">
+      <h2>Eventos</h2>
+      <div id="eventos" aria-live="polite"></div>
+    </section>
+  </aside>
+
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.js"></script>
+  <script type="module" src="./src/game.js"></script>
+</body>
+</html>
